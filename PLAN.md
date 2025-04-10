@@ -103,22 +103,27 @@ The plan below details the steps to build this standalone Image Reader Module AP
 **Status:** Ready to Begin
 
 *   **Phase 3.1: Basic UI Setup**
-    *   [ ] Initialize Frontend project (React with Vite or Next.js)
-    *   [ ] Basic component structure for chat/interaction
+    *   [ ] Initialize Frontend project (React with Vite or Next.js) *(See: Mobile Build Guide.md - Sec I, III)*
+    *   [ ] Basic component structure for chat/interaction *(See: Mobile Build Guide.md - Sec II, III)*
+    *   [ ] Implement basic responsive layout *(See: Mobile Build Guide.md - Sec I, II)*
+    *   [ ] Ensure touch-friendly navigation and controls *(See: Mobile Build Guide.md - Sec II.A, II.B)*
 
 *   **Phase 3.2: ElevenLabs SDK Integration**
     *   [ ] Install relevant SDK (`@11labs/react` or adjust for Next.js)
     *   [ ] Implement `useConversation` hook or equivalent client-side logic
     *   [ ] Connect UI to the configured ElevenLabs Agent ID
-    *   [ ] Handle voice input/output streaming
+    *   [ ] Handle voice input/output streaming *(See: Mobile Build Guide.md - Sec II.D, IV.A, IV.D)*
+    *   [ ] Implement UI feedback for voice state (listening, processing) *(See: Mobile Build Guide.md - Sec II.D)*
+    *   [ ] Display real-time text captions *(See: Mobile Build Guide.md - Sec II.F, IV.C)*
     *   [ ] Reference:
         *   [ElevenLabs React SDK Docs](https://elevenlabs.io/docs/conversational-ai/libraries/react)
         *   [ElevenLabs Next.js Quickstart](https://elevenlabs.io/docs/conversational-ai/guides/quickstarts/next-js)
 
 *   **Phase 3.3: Image Input Integration**
-    *   [ ] Add UI elements for image file upload
-    *   [ ] (Optional) Add UI elements for camera capture
+    *   [ ] Add UI elements for image file upload *(See: Mobile Build Guide.md - Sec II.B)*
+    *   [ ] (Optional) Add UI elements for camera capture *(See: Mobile Build Guide.md - Sec II.E, IV.B)*
     *   [ ] Modify frontend logic to send image data (likely as base64 or a URL) as part of the conversation context to ElevenLabs/backend.
+    *   [ ] Handle camera permissions and stream display *(See: Mobile Build Guide.md - Sec II.E, IV.B)*
 
 ---
 
