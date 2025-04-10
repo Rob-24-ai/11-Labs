@@ -130,3 +130,12 @@ dmypy.json
 
 # Cython debug symbols
 cython_debug/
+
+# Environment variables
+.env
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
