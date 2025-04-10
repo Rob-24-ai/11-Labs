@@ -2,7 +2,8 @@ import os
 import json
 import uuid
 import base64 # Add base64 for potential image decoding
-from flask import Flask, request, jsonify, Response, stream_with_context # Add Response and stream_with_context
+import requests # Add requests for making API calls to ElevenLabs
+from flask import Flask, request, jsonify, Response, stream_with_context, send_from_directory # Add send_from_directory
 from flask_cors import CORS
 from dotenv import load_dotenv
 from llm_factory import create_llm_service # Import the factory
@@ -25,22 +26,103 @@ def home():
 @app.route('/analyze', methods=['POST'])
 def analyze_image():
     """
-    Placeholder endpoint for image analysis.
-    Currently accepts POST requests but does no processing.
+    Endpoint for image analysis that sends results to ElevenLabs for vocalization.
+    Accepts image data as file upload or URL and returns analysis.
     """
-    # TODO: Implement image input handling (file upload, URL) - Phase 1
-    # TODO: Implement security checks (size, type) - Phase 1
-    # TODO: Implement image processing (Pillow) - Phase 1
-    # TODO: Implement LLM call (requests) - Phase 1
-    # TODO: Implement LLM adapter pattern - Phase 2
+    try:
+        # Check if we have image data
+        image_data = None
+        image_url = None
+        
+        # Check for file upload
+        if 'image' in request.files:
+            image_file = request.files['image']
+            image_data = image_file.read()
+        # Check for URL in JSON body
+        elif request.is_json and 'image_url' in request.json:
+            image_url = request.json['image_url']
+        else:
+            return jsonify({
+                "error": "No image provided. Please upload an image file or provide an image_url."
+            }), 400
+            
+        # Get prompt from request or use default
+        prompt = "Describe this image in detail."
+        if request.is_json and 'prompt' in request.json:
+            prompt = request.json['prompt']
+            
+        # Get LLM configuration from environment variables
+        llm_provider = os.getenv('LLM_PROVIDER', 'openai').lower()
+        api_key = os.getenv(f"{llm_provider.upper()}_API_KEY")
 
-    print("Received request for /analyze") # Basic logging
+        if not api_key:
+            return jsonify({
+                "error": f"API key for '{llm_provider}' not configured."
+            }), 500
 
-    # Placeholder response
-    return jsonify({
-        "status": "received",
-        "message": "Analysis endpoint called. Implementation pending."
-    }), 200
+        # Create LLM service
+        llm_service = create_llm_service(provider=llm_provider, api_key=api_key)
+        
+        # Prepare message with image
+        messages = [
+            {"role": "system", "content": "You are an expert at analyzing and describing images in detail."},
+            {"role": "user", "content": [
+                {"type": "text", "text": prompt}
+            ]}
+        ]
+        
+        # Add image to the user message content
+        if image_url:
+            # Add image URL to message
+            messages[1]["content"].append({
+                "type": "image_url",
+                "image_url": {"url": image_url}
+            })
+        elif image_data:
+            # Process image data
+            base64_image = base64.b64encode(image_data).decode('utf-8')
+            data_url = f"data:image/jpeg;base64,{base64_image}"
+            messages[1]["content"].append({
+                "type": "image_url",
+                "image_url": {"url": data_url}
+            })
+            
+        # Call LLM for analysis
+        response = llm_service.chat_completion(
+            messages=messages,
+            model=os.getenv('DEFAULT_MODEL', 'gpt-4o')
+        )
+        
+        # Extract the analysis text
+        analysis_text = response.choices[0].message.content
+        
+        # Check if we should send to ElevenLabs
+        send_to_elevenlabs = request.args.get('voice', 'false').lower() == 'true'
+        elevenlabs_response = None
+        
+        if send_to_elevenlabs:
+            # Send to ElevenLabs for vocalization
+            elevenlabs_response = send_to_elevenlabs_tts(analysis_text)
+            
+        # Return the analysis and optional ElevenLabs response
+        result = {
+            "status": "success",
+            "analysis": analysis_text
+        }
+        
+        if elevenlabs_response:
+            result["elevenlabs"] = elevenlabs_response
+            
+        return jsonify(result), 200
+            
+    except Exception as e:
+        print(f"Error in analyze_image: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        
+        return jsonify({
+            "error": f"Error analyzing image: {str(e)}"
+        }), 500
 
 @app.route('/v1/chat/completions', methods=['POST'])
 def chat_completions():
@@ -49,6 +131,17 @@ def chat_completions():
     Accepts messages in OpenAI format and returns a compatible response.
     Handles image data in messages for multimodal analysis.
     """
+    # Log request headers and body for debugging
+    print("\n=== INCOMING REQUEST ===\n")
+    print(f"Headers: {dict(request.headers)}")
+    print(f"Request Method: {request.method}")
+    print(f"Content-Type: {request.content_type}")
+    # Don't log the full body as it might contain sensitive data
+    print(f"Request Body Keys: {request.json.keys() if request.is_json else 'Not JSON'}")
+    if request.is_json and 'messages' in request.json:
+        print(f"Message Count: {len(request.json.get('messages', []))}")
+        print(f"Stream Mode: {request.json.get('stream', False)}")
+    print("\n=== END REQUEST INFO ===\n")
     try:
         # Validate request has JSON content
         if not request.is_json:
@@ -167,8 +260,12 @@ def chat_completions():
                         # Optionally yield an error event
                         yield f"data: {json.dumps({'error': str(e)})}\n\n"
                 
-                # Return a streaming response
-                return Response(stream_with_context(generate_chunks()), mimetype='text/event-stream')
+                # Return a streaming response with additional headers for CORS
+                response = Response(stream_with_context(generate_chunks()), mimetype='text/event-stream')
+                # Add headers that might help with cross-origin streaming
+                response.headers['Cache-Control'] = 'no-cache'
+                response.headers['X-Accel-Buffering'] = 'no'  # Helps with nginx proxy buffering
+                return response
             else:
                 # Non-streaming: Convert the ChatCompletion object to a dictionary before jsonify
                 return jsonify(llm_response.model_dump())
@@ -227,6 +324,188 @@ def chat_completions():
                 "code": 500
             }
         }), 500
+
+# Add a route for '/chat/completions' to handle ElevenLabs requests without the v1 prefix
+@app.route('/chat/completions', methods=['POST'])
+def chat_completions_no_v1():
+    """Alias for the /v1/chat/completions endpoint to handle ElevenLabs requests."""
+    print("Received request for /chat/completions - forwarding to /v1/chat/completions handler")
+    return chat_completions()
+
+def send_to_elevenlabs_tts(text):
+    """
+    Send text to ElevenLabs for text-to-speech conversion or to a specific agent.
+    
+    Args:
+        text: The text to convert to speech or send to an agent
+        
+    Returns:
+        Dictionary with response information or None if failed
+    """
+    try:
+        # Get ElevenLabs API key from environment variables
+        api_key = os.getenv('ELEVENLABS_API_KEY')
+        if not api_key:
+            print("Error: ELEVENLABS_API_KEY not found in environment variables")
+            return None
+            
+        # Check if we have an agent ID
+        agent_id = os.getenv('ELEVENLABS_AGENT_ID', 'r7QeXEUadxgIchsAQYax')  # Use the provided agent ID
+        
+        if agent_id:
+            # Send to ElevenLabs agent
+            return send_to_elevenlabs_agent(text, agent_id, api_key)
+        else:
+            # Fall back to regular TTS if no agent ID
+            return generate_elevenlabs_audio(text, api_key)
+            
+    except Exception as e:
+        print(f"Error sending to ElevenLabs: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return {
+            "status": "error",
+            "message": f"Error: {str(e)}"
+        }
+
+def send_to_elevenlabs_agent(text, agent_id, api_key):
+    """
+    Send a message to a specific ElevenLabs agent.
+    
+    Args:
+        text: The text to send to the agent
+        agent_id: The ID of the ElevenLabs agent
+        api_key: ElevenLabs API key
+        
+    Returns:
+        Dictionary with response information
+    """
+    try:
+        # ElevenLabs API endpoint for agent messages
+        url = f"https://api.elevenlabs.io/v1/agents/{agent_id}/chat"
+        
+        # Headers with API key
+        headers = {
+            "Accept": "application/json",
+            "Content-Type": "application/json",
+            "xi-api-key": api_key
+        }
+        
+        # Create a new conversation or use existing one
+        conversation_id = os.getenv('ELEVENLABS_CONVERSATION_ID')
+        
+        # Request body
+        data = {
+            "text": text,
+            "conversation_id": conversation_id
+        }
+        
+        # Make the request
+        response = requests.post(url, json=data, headers=headers)
+        
+        if response.status_code == 200 or response.status_code == 201:
+            response_data = response.json()
+            
+            # Store conversation ID for future use if it's new
+            if not conversation_id and 'conversation_id' in response_data:
+                os.environ['ELEVENLABS_CONVERSATION_ID'] = response_data['conversation_id']
+                
+            return {
+                "status": "success",
+                "agent_response": response_data,
+                "message": "Message sent to ElevenLabs agent successfully"
+            }
+        else:
+            print(f"Error from ElevenLabs Agent API: {response.status_code} - {response.text}")
+            return {
+                "status": "error",
+                "message": f"ElevenLabs Agent API error: {response.status_code}",
+                "details": response.text
+            }
+    except Exception as e:
+        print(f"Error sending to ElevenLabs agent: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return {
+            "status": "error",
+            "message": f"Error: {str(e)}"
+        }
+
+def generate_elevenlabs_audio(text, api_key):
+    """
+    Generate audio from text using ElevenLabs TTS API.
+    
+    Args:
+        text: The text to convert to speech
+        api_key: ElevenLabs API key
+        
+    Returns:
+        Dictionary with response information
+    """
+    try:
+        # Get voice ID from environment variables or use default
+        voice_id = os.getenv('ELEVENLABS_VOICE_ID', 'pNInz6obpgDQGcFmaJgB')  # Default to Adam voice
+        
+        # ElevenLabs API endpoint for text-to-speech
+        url = f"https://api.elevenlabs.io/v1/text-to-speech/{voice_id}"
+        
+        # Headers with API key
+        headers = {
+            "Accept": "audio/mpeg",
+            "Content-Type": "application/json",
+            "xi-api-key": api_key
+        }
+        
+        # Request body
+        data = {
+            "text": text,
+            "model_id": "eleven_multilingual_v2",
+            "voice_settings": {
+                "stability": 0.5,
+                "similarity_boost": 0.5
+            }
+        }
+        
+        # Make the request
+        response = requests.post(url, json=data, headers=headers)
+        
+        if response.status_code == 200:
+            # Save the audio file
+            filename = f"speech_{uuid.uuid4()}.mp3"
+            filepath = os.path.join(os.path.dirname(__file__), 'static', filename)
+            
+            # Create static directory if it doesn't exist
+            os.makedirs(os.path.dirname(filepath), exist_ok=True)
+            
+            # Write the audio file
+            with open(filepath, 'wb') as f:
+                f.write(response.content)
+                
+            # Return the URL to the audio file
+            return {
+                "status": "success",
+                "audio_url": f"/static/{filename}"
+            }
+        else:
+            print(f"Error from ElevenLabs TTS API: {response.status_code} - {response.text}")
+            return {
+                "status": "error",
+                "message": f"ElevenLabs TTS API error: {response.status_code}",
+                "details": response.text
+            }
+    except Exception as e:
+        print(f"Error generating ElevenLabs audio: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return {
+            "status": "error",
+            "message": f"Error: {str(e)}"
+        }
+
+# Add a route to serve static files
+@app.route('/static/<path:filename>')
+def serve_static(filename):
+    return send_from_directory('static', filename)
 
 if __name__ == '__main__':
     # Read port from environment variable or default to 5001

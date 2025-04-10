@@ -68,10 +68,9 @@ The plan below details the steps to build this standalone Image Reader Module AP
         *   [ ] Handle streaming responses if `stream: true` is received.
         *   [X] Implement basic session management (in-memory initially).
         *   [X] Integrate image extraction logic (base64/URL) from messages.
-    *   [X] **Step 2: Testing the Custom LLM Endpoint**
-        *   [X] Use `curl` to send test requests (including text and image data).
-        *   [X] Verify correct response format and content.
-        *   [X] Test session handling.
+    *   [X] **Step 2: Test Endpoint Locally**
+        *   [X] Sent test requests (mimicking ElevenLabs) using `curl` or a tool like Postman. Verified image data handling.
+    *   [X] **Step 3: Expose Endpoint Publicly (Temporary)**
         *   [X] **Note:** Used `ngrok` to expose local server at `https://231d-2600-6c65-727f-8221-79fc-7cd5-73f8-1f3c.ngrok-free.app`.
         *   [X] Added detailed request logging for troubleshooting ElevenLabs integration.
 
@@ -82,7 +81,7 @@ The plan below details the steps to build this standalone Image Reader Module AP
         *   [X] Specified the model name: `gpt-4o`
         *   [X] Confirmed "Custom LLM extra body" setting is enabled to allow passing image data.
         *   [ ] **Security Note:** Consider setting up an allowlist for production to restrict which domains can connect to the agent.
-    *   [ ] Obtain necessary credentials/IDs from ElevenLabs for frontend integration (e.g., Agent ID).
+    *   [X] Obtain necessary credentials/IDs from ElevenLabs for frontend integration (e.g., Agent ID). - *Agent ID `r7QeXEUadxgIchsAQYax` confirmed.*
 
 *   **Phase 2.3: Containerization & Configuration**
     *   [ ] Create `Dockerfile`
@@ -101,6 +100,7 @@ The plan below details the steps to build this standalone Image Reader Module AP
 ## Stage 3: Frontend Development
 
 **Goal:** Create a web interface using React or Next.js to interact with the ElevenLabs agent (powered by our backend).
+**Status:** Ready to Begin
 
 *   **Phase 3.1: Basic UI Setup**
     *   [ ] Initialize Frontend project (React with Vite or Next.js)
@@ -124,35 +124,11 @@ The plan below details the steps to build this standalone Image Reader Module AP
 
 ## Stage 4: Testing & Refinement
 
-**Goal:** Ensure end-to-end functionality and apply optional improvements.from flask import Flask
-import os
-
-# --- Start Minimal App Code ---
-app = Flask(__name__)
-
-@app.route('/')
-def hello_world():
-    return 'Minimal App Works!'
-
-@app.route('/test')
-def test_route():
-    return 'Test Route Works!'
-
-if __name__ == '__main__':
-    # Ensure PORT is correctly loaded or hardcoded for test
-    # Default to 64677 if PORT env var is not set
-    port = int(os.environ.get("PORT", 64677))
-    # Run with debug=False initially to rule out reloader issues
-    print(f"--- Starting Minimal App on 0.0.0.0:{port} ---")
-    app.run(host='0.0.0.0', port=port, debug=False)
-# --- End Minimal App Code ---
-
-# You can optionally paste your original code below, commented out,
-# or simply delete the original content before pasting this.
+**Goal:** Ensure end-to-end functionality and apply optional improvements.
 
 *   **Phase 4.1: End-to-End Testing**
     *   [X] Test Backend API Standalone (Phases 1.1-1.5) - *Initial tests done*
-    *   [ ] Test ElevenLabs <-> Backend Integration (Phase 2.1)
+    *   [X] Test ElevenLabs <-> Backend Integration (Phase 2.1/2.2) - *Confirmed via ElevenLabs playground*
     *   [ ] Test Frontend <-> ElevenLabs Integration (Phase 3.2)
     *   [ ] Test Full Flow: Frontend Image Upload -> ElevenLabs -> Backend Analysis -> Frontend Response (Voice/Text)
 

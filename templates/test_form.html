@@ -1,0 +1,212 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Image Reader Module Test</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        .form-group {
+            margin-bottom: 15px;
+        }
+        label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: bold;
+        }
+        input, textarea, select {
+            width: 100%;
+            padding: 8px;
+            box-sizing: border-box;
+        }
+        button {
+            background-color: #4CAF50;
+            color: white;
+            padding: 10px 15px;
+            border: none;
+            cursor: pointer;
+        }
+        button:hover {
+            background-color: #45a049;
+        }
+        #result {
+            margin-top: 20px;
+            padding: 15px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            display: none;
+        }
+        #loading {
+            display: none;
+            text-align: center;
+            margin-top: 20px;
+        }
+        .preview-container {
+            margin-top: 15px;
+            text-align: center;
+        }
+        #imagePreview {
+            max-width: 100%;
+            max-height: 300px;
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <h1>Image Reader Module Test</h1>
+    
+    <div class="form-group">
+        <label for="provider">LLM Provider:</label>
+        <select id="provider">
+            <option value="openai">OpenAI</option>
+            <option value="gemini">Gemini</option>
+        </select>
+    </div>
+    
+    <div class="form-group">
+        <label for="prompt">Prompt:</label>
+        <textarea id="prompt" rows="3" placeholder="Enter your prompt here...">Describe this image in detail.</textarea>
+    </div>
+    
+    <div class="form-group">
+        <label for="imageInput">Upload Image:</label>
+        <input type="file" id="imageInput" accept="image/*">
+        <div class="preview-container">
+            <img id="imagePreview" alt="Image Preview">
+        </div>
+    </div>
+    
+    <div class="form-group">
+        <label for="imageUrl">Or Enter Image URL:</label>
+        <input type="text" id="imageUrl" placeholder="https://example.com/image.jpg">
+    </div>
+    
+    <button id="analyzeBtn">Analyze Image</button>
+    
+    <div id="loading">
+        <p>Processing... Please wait.</p>
+    </div>
+    
+    <div id="result"></div>
+    
+    <script>
+        // Image preview functionality
+        const imageInput = document.getElementById('imageInput');
+        const imagePreview = document.getElementById('imagePreview');
+        
+        imageInput.addEventListener('change', function() {
+            const file = this.files[0];
+            if (file) {
+                const reader = new FileReader();
+                reader.onload = function(e) {
+                    imagePreview.src = e.target.result;
+                    imagePreview.style.display = 'block';
+                    document.getElementById('imageUrl').value = ''; // Clear URL input
+                }
+                reader.readAsDataURL(file);
+            }
+        });
+        
+        // URL input handling
+        const imageUrl = document.getElementById('imageUrl');
+        imageUrl.addEventListener('input', function() {
+            if (this.value) {
+                imagePreview.src = this.value;
+                imagePreview.style.display = 'block';
+                imageInput.value = ''; // Clear file input
+            } else {
+                imagePreview.style.display = 'none';
+            }
+        });
+        
+        // Form submission
+        document.getElementById('analyzeBtn').addEventListener('click', async function() {
+            const prompt = document.getElementById('prompt').value;
+            const provider = document.getElementById('provider').value;
+            const imageFile = document.getElementById('imageInput').files[0];
+            const imageUrlValue = document.getElementById('imageUrl').value;
+            
+            if (!prompt) {
+                alert('Please enter a prompt');
+                return;
+            }
+            
+            if (!imageFile && !imageUrlValue) {
+                alert('Please upload an image or provide an image URL');
+                return;
+            }
+            
+            const resultDiv = document.getElementById('result');
+            const loadingDiv = document.getElementById('loading');
+            
+            resultDiv.style.display = 'none';
+            loadingDiv.style.display = 'block';
+            
+            try {
+                // Set environment variable for LLM provider
+                await fetch('/set_provider', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ provider })
+                });
+                
+                let response;
+                
+                if (imageFile) {
+                    // Handle file upload
+                    const formData = new FormData();
+                    formData.append('image', imageFile);
+                    formData.append('prompt', prompt);
+                    
+                    response = await fetch('/analyze', {
+                        method: 'POST',
+                        body: formData
+                    });
+                } else {
+                    // Handle URL
+                    response = await fetch('/analyze', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json'
+                        },
+                        body: JSON.stringify({
+                            prompt: prompt,
+                            image_url: imageUrlValue
+                        })
+                    });
+                }
+                
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+                
+                const data = await response.json();
+                
+                resultDiv.innerHTML = `
+                    <h3>Analysis Result (${provider})</h3>
+                    <p><strong>Status:</strong> ${data.status || 'N/A'}</p>
+                    <p><strong>Input Type:</strong> ${data.input_type || 'N/A'}</p>
+                    ${data.original_filename ? `<p><strong>Filename:</strong> ${data.original_filename}</p>` : ''}
+                    <h4>Analysis:</h4>
+                    <p>${data.result || data.analysis || 'No analysis provided'}</p>
+                `;
+                
+                resultDiv.style.display = 'block';
+            } catch (error) {
+                console.error('Error:', error);
+                resultDiv.innerHTML = `<p>Error: ${error.message}</p>`;
+                resultDiv.style.display = 'block';
+            } finally {
+                loadingDiv.style.display = 'none';
+            }
+        });
+    </script>
+</body>
+</html>

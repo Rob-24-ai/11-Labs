@@ -1,0 +1,12 @@
+version: '3'
+
+services:
+  custom-llm-service:
+    build: .
+    ports:
+      - "5002:5002"
+    environment:
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+    volumes:
+      - ./.env:/app/.env
+    restart: unless-stopped

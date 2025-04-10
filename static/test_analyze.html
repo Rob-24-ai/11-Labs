@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Image Analysis Test</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        .form-group {
+            margin-bottom: 15px;
+        }
+        label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: bold;
+        }
+        input[type="text"], textarea {
+            width: 100%;
+            padding: 8px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+        }
+        button {
+            background-color: #4CAF50;
+            color: white;
+            padding: 10px 15px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+        button:hover {
+            background-color: #45a049;
+        }
+        #result {
+            margin-top: 20px;
+            padding: 15px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            background-color: #f9f9f9;
+            min-height: 100px;
+        }
+        .audio-player {
+            margin-top: 15px;
+        }
+        #imagePreview {
+            max-width: 100%;
+            max-height: 300px;
+            margin-top: 10px;
+            display: none;
+        }
+        .loading {
+            display: none;
+            margin-top: 15px;
+            color: #666;
+        }
+    </style>
+</head>
+<body>
+    <h1>Image Analysis with Voice</h1>
+    <p>Upload an image or provide an image URL to analyze it and hear the description.</p>
+    
+    <div class="form-group">
+        <label for="imageFile">Upload Image:</label>
+        <input type="file" id="imageFile" accept="image/*" onchange="previewImage(this)">
+        <img id="imagePreview" src="#" alt="Image Preview">
+    </div>
+    
+    <div class="form-group">
+        <label for="imageUrl">Or Image URL:</label>
+        <input type="text" id="imageUrl" placeholder="https://example.com/image.jpg" onchange="previewImageUrl(this.value)">
+    </div>
+    
+    <div class="form-group">
+        <label for="prompt">Custom Prompt (optional):</label>
+        <textarea id="prompt" rows="3" placeholder="Describe this image in detail."></textarea>
+    </div>
+    
+    <div class="form-group">
+        <input type="checkbox" id="enableVoice" checked>
+        <label for="enableVoice" style="display: inline;">Enable Voice Response</label>
+    </div>
+    
+    <button onclick="analyzeImage()">Analyze Image</button>
+    
+    <div class="loading" id="loadingIndicator">
+        Analyzing image and generating voice response... This may take a few moments.
+    </div>
+    
+    <div id="result">
+        <p>Analysis results will appear here.</p>
+    </div>
+    
+    <div class="audio-player" id="audioPlayer" style="display: none;">
+        <h3>Voice Response:</h3>
+        <audio controls id="audioElement" style="width: 100%;">
+            Your browser does not support the audio element.
+        </audio>
+    </div>
+    
+    <script>
+        function previewImage(input) {
+            const preview = document.getElementById('imagePreview');
+            const imageUrl = document.getElementById('imageUrl');
+            
+            if (input.files && input.files[0]) {
+                const reader = new FileReader();
+                
+                reader.onload = function(e) {
+                    preview.src = e.target.result;
+                    preview.style.display = 'block';
+                    imageUrl.value = ''; // Clear URL field
+                }
+                
+                reader.readAsDataURL(input.files[0]);
+            }
+        }
+        
+        function previewImageUrl(url) {
+            if (url) {
+                const preview = document.getElementById('imagePreview');
+                const imageFile = document.getElementById('imageFile');
+                
+                preview.src = url;
+                preview.style.display = 'block';
+                imageFile.value = ''; // Clear file input
+                
+                // Handle load errors
+                preview.onerror = function() {
+                    preview.style.display = 'none';
+                    alert('Could not load image from URL. Please check the URL and try again.');
+                };
+            }
+        }
+        
+        async function analyzeImage() {
+            const imageFile = document.getElementById('imageFile').files[0];
+            const imageUrl = document.getElementById('imageUrl').value;
+            const prompt = document.getElementById('prompt').value;
+            const enableVoice = document.getElementById('enableVoice').checked;
+            
+            // Validate input
+            if (!imageFile && !imageUrl) {
+                alert('Please upload an image or provide an image URL.');
+                return;
+            }
+            
+            // Show loading indicator
+            document.getElementById('loadingIndicator').style.display = 'block';
+            document.getElementById('result').innerHTML = '<p>Analyzing...</p>';
+            document.getElementById('audioPlayer').style.display = 'none';
+            
+            try {
+                let formData;
+                let url = '/analyze';
+                
+                // Add voice parameter if enabled
+                if (enableVoice) {
+                    url += '?voice=true';
+                }
+                
+                if (imageFile) {
+                    // Use FormData for file upload
+                    formData = new FormData();
+                    formData.append('image', imageFile);
+                    if (prompt) {
+                        formData.append('prompt', prompt);
+                    }
+                    
+                    const response = await fetch(url, {
+                        method: 'POST',
+                        body: formData
+                    });
+                    
+                    handleResponse(await response.json());
+                } else {
+                    // Use JSON for URL
+                    const data = {
+                        image_url: imageUrl
+                    };
+                    
+                    if (prompt) {
+                        data.prompt = prompt;
+                    }
+                    
+                    const response = await fetch(url, {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json'
+                        },
+                        body: JSON.stringify(data)
+                    });
+                    
+                    handleResponse(await response.json());
+                }
+            } catch (error) {
+                console.error('Error:', error);
+                document.getElementById('result').innerHTML = `<p>Error: ${error.message}</p>`;
+                document.getElementById('loadingIndicator').style.display = 'none';
+            }
+        }
+        
+        function handleResponse(data) {
+            // Hide loading indicator
+            document.getElementById('loadingIndicator').style.display = 'none';
+            
+            if (data.error) {
+                document.getElementById('result').innerHTML = `<p>Error: ${data.error}</p>`;
+                return;
+            }
+            
+            // Display analysis
+            document.getElementById('result').innerHTML = `
+                <h3>Analysis:</h3>
+                <p>${data.analysis.replace(/\n/g, '<br>')}</p>
+            `;
+            
+            // Handle audio if available
+            if (data.elevenlabs && data.elevenlabs.status === 'success') {
+                const audioElement = document.getElementById('audioElement');
+                audioElement.src = data.elevenlabs.audio_url;
+                document.getElementById('audioPlayer').style.display = 'block';
+                audioElement.play();
+            }
+        }
+    </script>
+</body>
+</html>
