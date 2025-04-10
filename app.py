@@ -2,7 +2,7 @@ import os
 import json
 import uuid
 import base64 # Add base64 for potential image decoding
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, Response, stream_with_context # Add Response and stream_with_context
 from flask_cors import CORS
 from dotenv import load_dotenv
 from llm_factory import create_llm_service # Import the factory
@@ -138,21 +138,40 @@ def chat_completions():
                 stream=stream # Pass stream parameter
             )
             
-            # TODO: Handle streaming response if stream=True
+            # Handle streaming response if stream=True
             if stream:
-                # For now, return error if streaming requested but not implemented
-                print("Error: Streaming response requested but not yet implemented.")
-                return jsonify({
-                    "error": {
-                        "message": "Streaming response is not yet supported.",
-                        "type": "server_error",
-                        "code": 501 # Not Implemented
-                    }
-                }), 501
+                # Define a generator function to yield chunks
+                def generate_chunks():
+                    try:
+                        for chunk in llm_response:
+                            # Process the chunk (convert to string, format as SSE, etc.)
+                            # Assuming the chunk object has a structure we can serialize
+                            # Check common OpenAI streaming chunk structures
+                            content_delta = ""
+                            if chunk.choices and chunk.choices[0].delta:
+                                content_delta = chunk.choices[0].delta.content or ""
+                            
+                            if content_delta: # Only yield if there's content
+                                # Format as Server-Sent Event (SSE)
+                                # Example: data: {"id": "...", "choices": [...]} 
 
-            # Assuming non-streaming returns a dict compatible with OpenAI response
-            # Convert the ChatCompletion object to a dictionary before jsonify
-            return jsonify(llm_response.model_dump())
+                                # Simple approach: just yield the content delta
+                                # yield f"data: {json.dumps({'delta': content_delta})}\n\n"
+                                
+                                # More complete approach: yield OpenAI-like chunk structure
+                                chunk_dict = chunk.model_dump() # Convert Pydantic model to dict
+                                yield f"data: {json.dumps(chunk_dict)}\n\n"
+                                
+                    except Exception as e:
+                        print(f"Error during streaming: {str(e)}")
+                        # Optionally yield an error event
+                        yield f"data: {json.dumps({'error': str(e)})}\n\n"
+                
+                # Return a streaming response
+                return Response(stream_with_context(generate_chunks()), mimetype='text/event-stream')
+            else:
+                # Non-streaming: Convert the ChatCompletion object to a dictionary before jsonify
+                return jsonify(llm_response.model_dump())
         
         except Exception as e:
             # Catch errors during the LLM API call

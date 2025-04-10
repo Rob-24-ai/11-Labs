@@ -86,6 +86,13 @@
         <input type="text" id="imageUrl" placeholder="https://example.com/image.jpg">
     </div>
     
+    <div class="form-group">
+        <label for="streamCheckbox">
+            <input type="checkbox" id="streamCheckbox" name="stream">
+            Stream Response?
+        </label>
+    </div>
+
     <button id="analyzeBtn">Analyze Image</button>
     
     <div id="loading">
@@ -130,6 +137,7 @@
             const provider = document.getElementById('provider').value;
             const imageFile = document.getElementById('imageInput').files[0];
             const imageUrlValue = document.getElementById('imageUrl').value;
+            const streamCheckbox = document.getElementById('streamCheckbox').checked;
             
             if (!prompt) {
                 alert('Please enter a prompt');
@@ -214,27 +222,77 @@
                     },
                     body: JSON.stringify({
                         model: 'gpt-4o',
-                        messages: messages
+                        messages: messages,
+                        stream: streamCheckbox
                     })
                 });
                 
                 if (!response.ok) {
-                    const errorText = await response.text();
+                    const errorText = await response.text(); // Try to get error details
                     console.error('Server error details:', errorText);
                     throw new Error(`HTTP error! status: ${response.status}, details: ${errorText}`);
                 }
                 
-                const data = await response.json();
+                // --- Handle Response: Streaming vs Non-Streaming ---
+                if (streamCheckbox) {
+                    // Handle streamed response (SSE)
+                    resultDiv.innerHTML = `<h3>Analysis Result (${provider}) (Streaming)</h3><h4>Response:</h4><p id="streamedResponse"></p>`;
+                    const streamedResponseP = document.getElementById('streamedResponse');
+                    resultDiv.style.display = 'block';
+                    
+                    const reader = response.body.getReader();
+                    const decoder = new TextDecoder();
+                    let buffer = '';
+
+                    while (true) {
+                        const { value, done } = await reader.read();
+                        if (done) {
+                            console.log('Stream finished.');
+                            break;
+                        }
+                        
+                        // Decode the chunk and add to buffer
+                        buffer += decoder.decode(value, { stream: true });
+                        
+                        // Process buffer line by line for SSE messages
+                        let boundary = buffer.indexOf('\n\n');
+                        while (boundary !== -1) {
+                            const message = buffer.substring(0, boundary);
+                            buffer = buffer.substring(boundary + 2);
+                            
+                            if (message.startsWith('data:')) {
+                                const jsonData = message.substring(5).trim(); // Get content after 'data: '
+                                try {
+                                    const chunk = JSON.parse(jsonData);
+                                    // Extract content delta
+                                    const content = chunk.choices && chunk.choices[0] && chunk.choices[0].delta ? chunk.choices[0].delta.content : '';
+                                    if (content) {
+                                        streamedResponseP.textContent += content;
+                                    }
+                                } catch (e) {
+                                    console.error('Error parsing JSON chunk:', jsonData, e);
+                                }
+                            }
+                            boundary = buffer.indexOf('\n\n');
+                        }
+                    }
+                    // Append any remaining buffer content after stream ends (though unlikely for SSE delta)
+                    // streamedResponseP.textContent += decoder.decode(); // Final decode
+
+                } else {
+                    // Handle non-streamed JSON response
+                    const data = await response.json();
+                    resultDiv.innerHTML = `
+                        <h3>Analysis Result (${provider})</h3>
+                        <p><strong>Model:</strong> ${data.model || 'N/A'}</p>
+                        <p><strong>ID:</strong> ${data.id || 'N/A'}</p>
+                        <h4>Response:</h4>
+                        <p>${data.choices && data.choices[0] && data.choices[0].message ? data.choices[0].message.content : 'No response provided'}</p>
+                    `;
+                    resultDiv.style.display = 'block';
+                }
+                // --- End Handle Response ---
                 
-                resultDiv.innerHTML = `
-                    <h3>Analysis Result (${provider})</h3>
-                    <p><strong>Model:</strong> ${data.model || 'N/A'}</p>
-                    <p><strong>ID:</strong> ${data.id || 'N/A'}</p>
-                    <h4>Response:</h4>
-                    <p>${data.choices && data.choices[0] && data.choices[0].message ? data.choices[0].message.content : 'No response provided'}</p>
-                `;
-                
-                resultDiv.style.display = 'block';
             } catch (error) {
                 console.error('Error:', error);
                 resultDiv.innerHTML = `<p>Error: ${error.message}</p>`;
