@@ -6,6 +6,8 @@ import requests # Add requests for making API calls to ElevenLabs
 from flask import Flask, request, jsonify, Response, stream_with_context, send_from_directory # Add send_from_directory
 from flask_cors import CORS
 from dotenv import load_dotenv
+import openai # Add OpenAI library import
+import logging # <-- ADD LOGGING IMPORT
 from llm_factory import create_llm_service # Import the factory
 from llm_service import LLMService # Import base class for type hinting
 
@@ -13,15 +15,58 @@ from llm_service import LLMService # Import base class for type hinting
 load_dotenv()
 
 app = Flask(__name__)
-CORS(app)  # Enable CORS for all routes
+
+# --- ADD LOGGING CONFIG ---
+logging.basicConfig(level=logging.INFO) # Or DEBUG for more detail
+handler = logging.StreamHandler()
+handler.setLevel(logging.INFO)
+formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+handler.setFormatter(formatter)
+app.logger.addHandler(handler)
+app.logger.setLevel(logging.INFO)
+# --- END LOGGING CONFIG ---
+
+# Configure CORS to allow requests from the frontend
+cors = CORS(app, resources={
+    r"/*": {
+        "origins": [
+            "http://localhost:5173", 
+            "http://localhost:5174", 
+            "http://127.0.0.1:5174",
+            "https://231d-2600-6c65-727f-8221-79fc-7cd5-73f8-1f3c.ngrok-free.app"  # Add ngrok URL
+        ],
+        "methods": ["GET", "POST", "OPTIONS"],
+        "allow_headers": ["Content-Type"]
+    }
+})
 
 # Simple in-memory session storage
 sessions = {}
+
+# Add a global variable to store the latest image context
+latest_image_context = None
 
 @app.route('/')
 def home():
     """Simple route to check if the server is running."""
     return "Image Reader Module API is running!"
+
+# New endpoint to receive and store image context
+@app.route('/register_image_context', methods=['POST'])
+def register_image_context():
+    global latest_image_context
+    if not request.is_json:
+        app.logger.warning("'/register_image_context' received non-JSON request")
+        return jsonify({"error": "Request must be JSON"}), 400
+    data = request.get_json()
+    description = data.get('description')
+    if not description:
+        app.logger.warning("'/register_image_context' missing 'description' field")
+        return jsonify({"error": "'description' field is required"}), 400
+
+    latest_image_context = description
+    app.logger.info(f"Stored image context: {description[:100]}...") # Log truncated context
+    return jsonify({"message": "Context registered successfully"}), 200
 
 @app.route('/analyze', methods=['POST'])
 def analyze_image():
@@ -126,64 +171,74 @@ def analyze_image():
 
 @app.route('/v1/chat/completions', methods=['POST'])
 def chat_completions():
-    """
-    OpenAI-compatible chat completions endpoint for ElevenLabs integration.
-    Accepts messages in OpenAI format and returns a compatible response.
-    Handles image data in messages for multimodal analysis.
-    """
-    # Log request headers and body for debugging
-    print("\n=== INCOMING REQUEST ===\n")
-    print(f"Headers: {dict(request.headers)}")
-    print(f"Request Method: {request.method}")
-    print(f"Content-Type: {request.content_type}")
-    # Don't log the full body as it might contain sensitive data
-    print(f"Request Body Keys: {request.json.keys() if request.is_json else 'Not JSON'}")
-    if request.is_json and 'messages' in request.json:
-        print(f"Message Count: {len(request.json.get('messages', []))}")
-        print(f"Stream Mode: {request.json.get('stream', False)}")
-    print("\n=== END REQUEST INFO ===\n")
+    global latest_image_context # Access the global context
+    # Log raw request body first
+    raw_data = request.get_data(as_text=True)
+    app.logger.debug(f"RAW Request Body for /v1/chat/completions: {raw_data[:500]}...") # Log truncated raw data
+
     try:
-        # Validate request has JSON content
+        # Attempt to parse JSON after logging raw data
         if not request.is_json:
-            return jsonify({
-                "error": {
-                    "message": "Request must be JSON",
-                    "type": "invalid_request_error",
-                    "code": 400
-                }
-            }), 400
-            
-        data = request.json
-        
-        # Validate required fields
-        if not data:
-            return jsonify({
-                "error": {
-                    "message": "Request body cannot be empty",
-                    "type": "invalid_request_error",
-                    "code": 400
-                }
-            }), 400
-        
-        # Extract key parameters
-        model = data.get('model', os.getenv('DEFAULT_MODEL', 'gpt-4o')) # Use env var for default
+             app.logger.warning("Request to /v1/chat/completions is not JSON")
+             app.logger.warning(f"Request Content-Type: {request.content_type}")
+             return jsonify({"error": "Request must be JSON"}), 400
+
+        data = request.get_json()
+        app.logger.info(f"Parsed Request Body Keys for /v1/chat/completions: {list(data.keys())}")
+
         messages = data.get('messages', [])
-        temperature = data.get('temperature') # Pass optional params
-        max_tokens = data.get('max_tokens')
-        stream = data.get('stream', False) # Check if streaming is requested
+        stream = data.get('stream', False)
+        model = data.get('model', os.getenv('DEFAULT_MODEL', 'gpt-4o')) # Use model from request or default
+
+        # --- INJECT CONTEXT IF AVAILABLE --- 
+        # Check if this request is likely from the SDK (e.g., has 'stream' key)
+        # and if we have stored context.
+        is_sdk_request = 'stream' in data # Heuristic: SDK usually streams
+        # Also check that the request doesn't ALREADY contain an image
+        has_image_in_request = any(
+            isinstance(item, dict) and item.get('type') == 'image_url'
+            for msg in messages
+            for item in (msg.get('content') if isinstance(msg.get('content'), list) else [])
+        )
+
+        if is_sdk_request and not has_image_in_request and latest_image_context:
+            app.logger.info("Injecting stored image context into messages for SDK request.")
+            context_message = {
+                "role": "system",
+                "content": f"CONTEXT: The user previously uploaded an image. Its description is: {latest_image_context}"
+            }
+            # Find the first non-system message index to insert before it
+            insert_index = 0
+            for i, msg in enumerate(messages):
+                if msg.get('role') != 'system':
+                    insert_index = i
+                    break
+            else: # If only system messages exist, append after them
+                 insert_index = len(messages)
+            
+            messages.insert(insert_index, context_message)
+            # Option to clear context after use:
+            # latest_image_context = None 
+            app.logger.info(f"Messages after injection: {messages}") # Log messages after injection
+        elif not is_sdk_request:
+             app.logger.info("Request seems to be direct analysis (no 'stream' key), not injecting context.")
+        elif has_image_in_request:
+            app.logger.info("Request already contains image data, not injecting stored context.")
+        elif not latest_image_context:
+            app.logger.info("No stored image context to inject.")
+        # --- END CONTEXT INJECTION ---
+
+        # Check again if the request contains image data (might have been injected)
+        has_image_data = any(
+            isinstance(item, dict) and item.get('type') == 'image_url'
+            for msg in messages
+            for item in (msg.get('content') if isinstance(msg.get('content'), list) else [])
+        )
         
-        # Validate messages format
-        if not isinstance(messages, list) or not messages:
-            return jsonify({
-                "error": {
-                    "message": "'messages' must be an array",
-                    "type": "invalid_request_error",
-                    "code": 400
-                }
-            }), 400
-        
-        # --- LLM Service Integration --- 
-        # Get LLM configuration from environment variables
+        # Log request details (Moved the function definition lower) 
+        # log_request_info(request, data, messages, stream, has_image_data)
+
+        # Get LLM configuration
         llm_provider = os.getenv('LLM_PROVIDER', 'openai').lower()
         api_key = os.getenv(f"{llm_provider.upper()}_API_KEY")
 
@@ -226,8 +281,8 @@ def chat_completions():
             llm_response = llm_service.chat_completion(
                 messages=messages,
                 model=model,
-                temperature=temperature,
-                max_tokens=max_tokens,
+                temperature=data.get('temperature'),
+                max_tokens=data.get('max_tokens'),
                 stream=stream # Pass stream parameter
             )
             
@@ -506,6 +561,80 @@ def generate_elevenlabs_audio(text, api_key):
 @app.route('/static/<path:filename>')
 def serve_static(filename):
     return send_from_directory('static', filename)
+
+# Endpoint for Text-to-Speech using ElevenLabs
+@app.route('/v1/voice/speak', methods=['POST'])
+def speak_text():
+    """Accepts text and returns URL to ElevenLabs generated audio."""
+    if not request.is_json:
+        return jsonify({"error": "Request must be JSON"}), 400
+        
+    data = request.get_json()
+    text = data.get('text')
+    
+    if not text:
+        return jsonify({"error": "'text' field is required"}), 400
+        
+    api_key = os.getenv('ELEVENLABS_API_KEY')
+    if not api_key:
+        return jsonify({"error": "ELEVENLABS_API_KEY not configured."}), 500
+        
+    result = generate_elevenlabs_audio(text, api_key)
+    
+    if result and result.get("status") == "success":
+        # Construct the full URL for the client
+        # Using request.host_url as a base assumes the server is accessible
+        # If behind ngrok, this might need adjustment or rely on frontend knowing the base
+        audio_url = request.host_url.strip('/') + result["audio_url"]
+        return jsonify({"audio_url": audio_url})
+    else:
+        error_message = result.get("message", "Failed to generate audio")
+        error_details = result.get("details", "")
+        return jsonify({"error": error_message, "details": error_details}), 500
+
+# Endpoint for Speech-to-Text using OpenAI Whisper
+@app.route('/v1/voice/transcribe', methods=['POST'])
+def transcribe_audio():
+    """Accepts audio file and returns transcription from OpenAI Whisper."""
+    if 'audio' not in request.files:
+        return jsonify({"error": "No audio file provided in the 'audio' field."}), 400
+        
+    audio_file = request.files['audio']
+    
+    # Basic check for filename or content type if needed, but Whisper handles various formats
+    # filename = audio_file.filename
+    # print(f"Received audio file: {filename}, type: {audio_file.mimetype}")
+    
+    api_key = os.getenv('OPENAI_API_KEY')
+    if not api_key:
+        return jsonify({"error": "OPENAI_API_KEY not configured."}), 500
+        
+    try:
+        client = openai.OpenAI(api_key=api_key)
+        
+        # Note: Whisper API needs the file object directly, 
+        # along with a hint about the filename for format detection.
+        # We need to pass the file stream and a name.
+        # Using a generic name like 'audio.webm' as the frontend sends a webm blob.
+        transcription_response = client.audio.transcriptions.create(
+            model="whisper-1", 
+            file=(audio_file.filename or "audio.webm", audio_file.stream, audio_file.mimetype),
+            response_format="json"
+        )
+        
+        transcribed_text = transcription_response.text
+        
+        print(f"Whisper transcription successful: {transcribed_text[:50]}...")
+        return jsonify({"transcription": transcribed_text})
+        
+    except openai.APIError as e:
+        print(f"OpenAI API Error during transcription: {e}")
+        return jsonify({"error": f"OpenAI API Error: {e.status_code} - {e.message}"}), 500
+    except Exception as e:
+        print(f"Error during transcription: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({"error": f"Transcription failed: {str(e)}"}), 500
 
 if __name__ == '__main__':
     # Read port from environment variable or default to 5001

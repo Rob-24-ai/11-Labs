@@ -1,0 +1,282 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ElevenLabs Format Test</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        .container {
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+        }
+        textarea {
+            min-height: 100px;
+            width: 100%;
+        }
+        .preview {
+            max-width: 300px;
+            max-height: 300px;
+            margin-top: 10px;
+        }
+        .response {
+            white-space: pre-wrap;
+            border: 1px solid #ccc;
+            padding: 10px;
+            background-color: #f9f9f9;
+            min-height: 200px;
+            overflow: auto;
+        }
+        .card {
+            border: 1px solid #ddd;
+            padding: 15px;
+            border-radius: 5px;
+        }
+    </style>
+</head>
+<body>
+    <h1>ElevenLabs Format Test Tool</h1>
+    <p>This tool helps test different ways of passing image data to your backend API.</p>
+    
+    <div class="container">
+        <div class="card">
+            <h2>1. Test Format</h2>
+            <p>Select the format to test:</p>
+            <select id="formatSelector">
+                <option value="messages">Standard OpenAI messages format</option>
+                <option value="context">Using context object</option>
+                <option value="11labs">Using 11labs.extra object</option>
+            </select>
+        </div>
+
+        <div class="card">
+            <h2>2. Image Upload</h2>
+            <input type="file" id="imageUpload" accept="image/*">
+            <div>
+                <img id="imagePreview" class="preview" style="display: none;">
+            </div>
+        </div>
+
+        <div class="card">
+            <h2>3. Text Prompt</h2>
+            <textarea id="promptText">Please describe this image in detail.</textarea>
+        </div>
+
+        <div class="card">
+            <h2>4. Request Preview</h2>
+            <textarea id="requestPreview" readonly></textarea>
+        </div>
+
+        <button id="sendButton">Send Request</button>
+
+        <div class="card">
+            <h2>5. Response</h2>
+            <div id="responseContainer" class="response"></div>
+        </div>
+    </div>
+
+    <script>
+        const imageUpload = document.getElementById('imageUpload');
+        const imagePreview = document.getElementById('imagePreview');
+        const promptText = document.getElementById('promptText');
+        const formatSelector = document.getElementById('formatSelector');
+        const requestPreview = document.getElementById('requestPreview');
+        const sendButton = document.getElementById('sendButton');
+        const responseContainer = document.getElementById('responseContainer');
+
+        let imageBase64 = null;
+
+        // Handle image upload and create preview
+        imageUpload.addEventListener('change', (event) => {
+            const file = event.target.files[0];
+            if (!file) return;
+
+            const reader = new FileReader();
+            reader.onloadend = () => {
+                imageBase64 = reader.result;
+                imagePreview.src = reader.result;
+                imagePreview.style.display = 'block';
+                updateRequestPreview();
+            };
+            reader.readAsDataURL(file);
+        });
+
+        // Update when prompt text changes
+        promptText.addEventListener('input', updateRequestPreview);
+        formatSelector.addEventListener('change', updateRequestPreview);
+
+        // Update request preview
+        function updateRequestPreview() {
+            if (!imageBase64) {
+                requestPreview.value = 'Please upload an image first';
+                return;
+            }
+
+            const format = formatSelector.value;
+            let requestBody = {};
+
+            switch (format) {
+                case 'messages':
+                    requestBody = {
+                        model: 'gpt-4o',
+                        messages: [
+                            {
+                                role: 'user',
+                                content: [
+                                    { type: 'text', text: promptText.value },
+                                    { 
+                                        type: 'image_url',
+                                        image_url: { url: imageBase64 }
+                                    }
+                                ]
+                            }
+                        ]
+                    };
+                    break;
+
+                case 'context':
+                    requestBody = {
+                        model: 'gpt-4o',
+                        messages: [
+                            {
+                                role: 'user',
+                                content: promptText.value
+                            }
+                        ],
+                        context: {
+                            image_url: imageBase64
+                        }
+                    };
+                    break;
+
+                case '11labs':
+                    requestBody = {
+                        model: 'gpt-4o',
+                        messages: [
+                            {
+                                role: 'user',
+                                content: promptText.value
+                            }
+                        ],
+                        '11labs': {
+                            extra: {
+                                image_url: imageBase64
+                            }
+                        }
+                    };
+                    break;
+            }
+
+            // Truncate the preview to save space
+            const previewObj = JSON.parse(JSON.stringify(requestBody));
+            if (previewObj.messages && previewObj.messages[0].content) {
+                if (Array.isArray(previewObj.messages[0].content)) {
+                    for (let item of previewObj.messages[0].content) {
+                        if (item.type === 'image_url' && item.image_url && item.image_url.url) {
+                            item.image_url.url = item.image_url.url.substring(0, 50) + '...';
+                        }
+                    }
+                }
+            }
+            if (previewObj.context && previewObj.context.image_url) {
+                previewObj.context.image_url = previewObj.context.image_url.substring(0, 50) + '...';
+            }
+            if (previewObj['11labs'] && previewObj['11labs'].extra && previewObj['11labs'].extra.image_url) {
+                previewObj['11labs'].extra.image_url = previewObj['11labs'].extra.image_url.substring(0, 50) + '...';
+            }
+
+            requestPreview.value = JSON.stringify(previewObj, null, 2);
+        }
+
+        // Send the request
+        sendButton.addEventListener('click', async () => {
+            if (!imageBase64) {
+                alert('Please upload an image first');
+                return;
+            }
+
+            responseContainer.textContent = 'Sending request...';
+            
+            const format = formatSelector.value;
+            let requestBody = {};
+
+            switch (format) {
+                case 'messages':
+                    requestBody = {
+                        model: 'gpt-4o',
+                        messages: [
+                            {
+                                role: 'user',
+                                content: [
+                                    { type: 'text', text: promptText.value },
+                                    { 
+                                        type: 'image_url',
+                                        image_url: { url: imageBase64 }
+                                    }
+                                ]
+                            }
+                        ]
+                    };
+                    break;
+
+                case 'context':
+                    requestBody = {
+                        model: 'gpt-4o',
+                        messages: [
+                            {
+                                role: 'user',
+                                content: promptText.value
+                            }
+                        ],
+                        context: {
+                            image_url: imageBase64
+                        }
+                    };
+                    break;
+
+                case '11labs':
+                    requestBody = {
+                        model: 'gpt-4o',
+                        messages: [
+                            {
+                                role: 'user',
+                                content: promptText.value
+                            }
+                        ],
+                        '11labs': {
+                            extra: {
+                                image_url: imageBase64
+                            }
+                        }
+                    };
+                    break;
+            }
+
+            try {
+                const response = await fetch('http://localhost:5001/v1/chat/completions', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify(requestBody)
+                });
+
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+
+                const result = await response.json();
+                responseContainer.textContent = JSON.stringify(result, null, 2);
+            } catch (error) {
+                responseContainer.textContent = `Error: ${error.message}`;
+            }
+        });
+    </script>
+</body>
+</html>
