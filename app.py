@@ -43,8 +43,16 @@ cors = CORS(app, resources={
 # Simple in-memory session storage
 sessions = {}
 
+# Global storage for session-specific image data keyed by conversationId
+session_storage = {}
+
+# Global temporary storage for image data before association, keyed by temporary ID
+temp_storage = {}
+
 # Add a global variable to store the latest image context
-latest_image_context = None
+latest_image_context = {
+    "description": None,
+}
 
 @app.route('/')
 def home():
@@ -64,7 +72,7 @@ def register_image_context():
         app.logger.warning("'/register_image_context' missing 'description' field")
         return jsonify({"error": "'description' field is required"}), 400
 
-    latest_image_context = description
+    latest_image_context["description"] = description
     app.logger.info(f"Stored image context: {description[:100]}...") # Log truncated context
     return jsonify({"message": "Context registered successfully"}), 200
 
@@ -201,11 +209,11 @@ def chat_completions():
             for item in (msg.get('content') if isinstance(msg.get('content'), list) else [])
         )
 
-        if is_sdk_request and not has_image_in_request and latest_image_context:
+        if is_sdk_request and not has_image_in_request and latest_image_context["description"]:
             app.logger.info("Injecting stored image context into messages for SDK request.")
             context_message = {
                 "role": "system",
-                "content": f"CONTEXT: The user previously uploaded an image. Its description is: {latest_image_context}"
+                "content": f"CONTEXT: The user previously uploaded an image. Its description is: {latest_image_context['description']}"
             }
             # Find the first non-system message index to insert before it
             insert_index = 0
@@ -224,7 +232,7 @@ def chat_completions():
              app.logger.info("Request seems to be direct analysis (no 'stream' key), not injecting context.")
         elif has_image_in_request:
             app.logger.info("Request already contains image data, not injecting stored context.")
-        elif not latest_image_context:
+        elif not latest_image_context["description"]:
             app.logger.info("No stored image context to inject.")
         # --- END CONTEXT INJECTION ---
 
@@ -501,53 +509,16 @@ def generate_elevenlabs_audio(text, api_key):
         # Get voice ID from environment variables or use default
         voice_id = os.getenv('ELEVENLABS_VOICE_ID', 'pNInz6obpgDQGcFmaJgB')  # Default to Adam voice
         
-        # ElevenLabs API endpoint for text-to-speech
-        url = f"https://api.elevenlabs.io/v1/text-to-speech/{voice_id}"
-        
-        # Headers with API key
-        headers = {
-            "Accept": "audio/mpeg",
-            "Content-Type": "application/json",
-            "xi-api-key": api_key
-        }
-        
-        # Request body
-        data = {
-            "text": text,
-            "model_id": "eleven_multilingual_v2",
-            "voice_settings": {
-                "stability": 0.5,
-                "similarity_boost": 0.5
-            }
-        }
-        
-        # Make the request
-        response = requests.post(url, json=data, headers=headers)
-        
-        if response.status_code == 200:
-            # Save the audio file
-            filename = f"speech_{uuid.uuid4()}.mp3"
-            filepath = os.path.join(os.path.dirname(__file__), 'static', filename)
-            
-            # Create static directory if it doesn't exist
-            os.makedirs(os.path.dirname(filepath), exist_ok=True)
-            
-            # Write the audio file
-            with open(filepath, 'wb') as f:
-                f.write(response.content)
-                
-            # Return the URL to the audio file
-            return {
-                "status": "success",
-                "audio_url": f"/static/{filename}"
-            }
+        if voice_id:
+            # Send to ElevenLabs agent
+            return send_to_elevenlabs_agent(text, voice_id, api_key)
         else:
-            print(f"Error from ElevenLabs TTS API: {response.status_code} - {response.text}")
+            # Fall back to regular TTS if no agent ID
             return {
                 "status": "error",
-                "message": f"ElevenLabs TTS API error: {response.status_code}",
-                "details": response.text
+                "message": "No voice ID provided for ElevenLabs TTS"
             }
+            
     except Exception as e:
         print(f"Error generating ElevenLabs audio: {str(e)}")
         import traceback
@@ -635,6 +606,79 @@ def transcribe_audio():
         import traceback
         traceback.print_exc()
         return jsonify({"error": f"Transcription failed: {str(e)}"}), 500
+
+# == NEW ENDPOINTS FOR BACKEND CONTEXT MANAGEMENT ==
+
+@app.route('/upload_image', methods=['POST'])
+def upload_image():
+    global temp_storage
+    if not request.is_json:
+        app.logger.warning("'/upload_image' received non-JSON request")
+        return jsonify({"error": "Request must be JSON"}), 415
+
+    data = request.get_json()
+    image_data = data.get('imageData') # Expecting base64 string
+
+    if not image_data:
+        app.logger.warning("'/upload_image' missing 'imageData' field")
+        return jsonify({"error": "'imageData' field is required"}), 400
+    
+    if not isinstance(image_data, str) or not image_data.startswith('data:image'):
+        app.logger.warning("'/upload_image' received invalid 'imageData' format")
+        return jsonify({"error": "'imageData' must be a base64 data URL string"}), 400
+
+    # Generate temporary ID
+    temp_id = uuid.uuid4().hex
+    
+    # Store image data in temporary storage
+    temp_storage[temp_id] = image_data
+    app.logger.info(f"Stored image data temporarily with ID: {temp_id}")
+
+    # Return the temporary ID to the frontend
+    return jsonify({"temporaryId": temp_id}), 200
+
+@app.route('/associate_context', methods=['POST'])
+def associate_context():
+    global temp_storage, session_storage
+    if not request.is_json:
+        app.logger.warning("'/associate_context' received non-JSON request")
+        return jsonify({"error": "Request must be JSON"}), 415
+
+    data = request.get_json()
+    conversation_id = data.get('conversationId')
+    temporary_id = data.get('temporaryId')
+
+    if not conversation_id or not temporary_id:
+        app.logger.warning("'/associate_context' missing 'conversationId' or 'temporaryId'")
+        return jsonify({"error": "'conversationId' and 'temporaryId' are required"}), 400
+
+    # Retrieve image data from temporary storage
+    image_data = temp_storage.get(temporary_id)
+
+    if not image_data:
+        app.logger.warning(f"'/associate_context' could not find image data for temporary ID: {temporary_id}")
+        # Even if not found, return success? Or error? Let's error for now.
+        return jsonify({"error": "Temporary image context not found or already associated"}), 404
+
+    # Store image data in session storage using the official conversationId
+    session_storage[conversation_id] = image_data
+    app.logger.info(f"Associated image data with conversation ID: {conversation_id}")
+
+    # Clean up temporary storage
+    try:
+        del temp_storage[temporary_id]
+        app.logger.info(f"Removed temporary image data for ID: {temporary_id}")
+    except KeyError:
+        app.logger.warning(f"Attempted to delete non-existent temporary key: {temporary_id}") # Should not happen if found above
+
+    return jsonify({"message": "Context associated successfully"}), 200
+
+# =====================================================
+
+@app.route('/analyze', methods=['POST'])
+def analyze():
+    # This endpoint might become redundant or change if initial analysis is handled by /upload_image
+    pass
 
 if __name__ == '__main__':
     # Read port from environment variable or default to 5001

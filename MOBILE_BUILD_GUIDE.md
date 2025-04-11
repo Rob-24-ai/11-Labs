@@ -1,4 +1,4 @@
-# Mobile Build Guide: Key Technical Points for Multimodal Conversational Web App
+Review the mobile build guide. ⁠# Mobile Build Guide: Key Technical Points for Multimodal Conversational Web App
 
 This guide summarizes critical technical considerations based on the provided expert document for building a mobile-first multimodal (camera, voice, captions) conversational web app using React and Vite.
 
@@ -11,6 +11,7 @@ This guide summarizes critical technical considerations based on the provided ex
     *   **Fluid Grids:** Use relative units (`%`, `vw`, `vh`, `rem`, `em`, `fr`).
     *   **CSS Grid:** For overall page structure (macro-layout).
     *   **CSS Flexbox:** For component layout and alignment (micro-layout).
+    *   **Avoid Fixed Layouts:** **Crucially, avoid fixed pixel widths for main containers or elements that should adapt.** Rely on fluid units and techniques like `max-width` to ensure content reflows naturally across screen sizes. Fixed layouts (as sometimes seen in initial CSS drafts) break responsiveness on smaller devices.
 *   **Media:** Use `max-width: 100%; height: auto;` for basic flexibility. Combine with responsive image techniques (Section IV) for performance.
 *   **Breakpoints:** Choose based on content, not specific devices. Use browser dev tools to find natural breaking points.
 
@@ -18,10 +19,6 @@ This guide summarizes critical technical considerations based on the provided ex
 
 *   **Navigation:** Consider Bottom Tabs, Hamburger/Off-Canvas, or Priority+. Design for Thumb Zones.
 *   **Touch Targets:** Minimum `44x44` CSS pixels (aim for `48x48`). Ensure sufficient spacing (>= `32px`).
-*   **Virtual Keyboard:**
-    *   Listen for `focus`/`blur` events on inputs.
-    *   On focus, scroll input into view (`element.scrollIntoView()`) or add padding.
-    *   Ensure `font-size: 16px` or higher in inputs to prevent iOS auto-zoom.
 *   **Voice Input (Eleven Labs):**
     *   Provide clear visual (listening/processing indicators) and audio feedback.
     *   Design conversational prompts and graceful error handling.
@@ -58,6 +55,7 @@ This guide summarizes critical technical considerations based on the provided ex
     *   Prevent unnecessary re-renders: `React.memo`, `useCallback`, `useMemo`.
     *   Choose global state libraries carefully (Context API, Redux Toolkit, Zustand, Recoil) based on frequency/complexity of updates. Zustand/Recoil often better for high-frequency streams than Context.
     *   Optimize state updates for real-time streams to minimize renders.
+    *   **Structure for Concurrency:** Consider dedicated state slices/stores (e.g., using Zustand or Redux Toolkit) for each major stream (Camera Input, Mic Input/Processing, Eleven Labs Output, Captions). Manage status (idle, active, processing, error) and associated data independently to prevent unnecessary coupling and re-renders.
 
 ## IV. Integrating Real-Time Features
 
@@ -87,3 +85,22 @@ This guide summarizes critical technical considerations based on the provided ex
 *   **Fundamentals:** Semantic HTML, ARIA roles/attributes (esp. live regions), Keyboard Navigation, Focus Management.
 *   **Mobile Specific:** Sufficient Touch Target size/spacing, Color Contrast.
 *   **Multimodal:** Provide captions/transcripts for audio/video.
+
+## VIII. Consistent Error Handling
+
+*   **Strategy:** Design a unified approach for handling errors across all multimodal interactions.
+*   **Sources:** Plan for API errors (network issues, rate limits, invalid responses from Eleven Labs, etc.), permission denials (`getUserMedia`), stream interruptions, and unexpected client-side issues.
+*   **User Feedback:** Provide clear, non-technical feedback to the user (visual cues, messages) indicating what went wrong and potential next steps.
+*   **Logging:** Implement client-side logging (potentially sending to a backend service) to capture technical details for debugging.
+
+## IX. Security Considerations
+
+*   **API Keys:** **Never embed sensitive API keys (like Eleven Labs) directly in the frontend JavaScript.** Use a backend proxy or serverless function to handle API requests, keeping keys secure on the server-side.
+*   **Permissions:** Request user permissions (camera, microphone) contextually, clearly explaining why they are needed. Handle denials gracefully.
+*   **Input Validation:** If user input is used to construct API requests, ensure proper validation and sanitization to prevent injection or abuse.
+
+## X. Build & Deployment Considerations
+
+*   **Build Optimization:** Leverage Vite's production build features (tree shaking, code splitting, minification). Analyze the bundle if needed (`rollup-plugin-visualizer`).
+*   **Hosting:** Suitable for static hosting platforms (Netlify, Vercel, Cloudflare Pages, AWS S3/CloudFront) if API keys are handled via a separate backend/proxy.
+*   **Backend/Proxy:** A simple backend service or serverless function is often necessary for secure API key management and potentially other server-side logic.

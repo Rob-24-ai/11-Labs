@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useConversation } from '@11labs/react';
 import Message from './Message';
 import './App.css';
@@ -16,6 +16,10 @@ function App() {
   const [transcript, setTranscript] = useState('');
   const [micPermissionGranted, setMicPermissionGranted] = useState(false);
   
+  // State for Context Management
+  const [temporaryId, setTemporaryId] = useState(null);
+  const [currentConversationId, setCurrentConversationId] = useState(null);
+  
   // Refs
   const fileInputRef = useRef(null);
   const messagesEndRef = useRef(null);
@@ -25,7 +29,8 @@ function App() {
     startSession,
     endSession,
     status, // 'connected' or 'disconnected'
-    isSpeaking // boolean
+    isSpeaking, // boolean
+    isRecording, // boolean
   } = useConversation({
     apiKey: import.meta.env.VITE_ELEVENLABS_API_KEY,
     url: 'http://localhost:5001/v1/chat/completions',
@@ -86,6 +91,28 @@ function App() {
         isError: true
       };
       setMessages(prev => [...prev, errorMessage]);
+      
+      // Auto-reconnect logic for certain types of errors
+      if (error.name === 'NetworkError' || 
+          error.message.includes('connection') || 
+          error.message.includes('timeout') || 
+          error.message.includes('disconnect')) {
+        
+        const reconnectMessage = {
+          content: 'Connection issue detected. Attempting to reconnect...',
+          sender: 'system',
+          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+        };
+        setMessages(prev => [...prev, reconnectMessage]);
+        
+        // Wait a moment before trying to reconnect
+        setTimeout(() => {
+          if (status === 'disconnected' && currentConversationId) {
+            console.log('Attempting to reconnect after error...');
+            handleConnectToggle();
+          }
+        }, 2000);
+      }
     }
   });
 
@@ -97,6 +124,36 @@ function App() {
   useEffect(() => {
     scrollToBottom();
   }, [messages]);
+
+  // Function to associate image context
+  const associateImageContext = async (convId, tempId) => {
+    if (!convId || !tempId) {
+      console.log('Associate context: Missing conversationId or temporaryId');
+      return;
+    }
+    console.log(`Attempting to associate convId: ${convId} with tempId: ${tempId}`);
+    setIsLoading(true);
+    try {
+      const response = await fetch('http://localhost:5001/associate_context', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ conversationId: convId, temporaryId: tempId }),
+      });
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+      const result = await response.json();
+      console.log('Association successful:', result);
+      setTemporaryId(null); // Clear temp ID after successful association
+    } catch (error) {
+      console.error('Error associating image context:', error);
+      // Handle error appropriately, maybe notify user
+    } finally {
+      setIsLoading(false);
+    }
+  };
 
   // Image handling functions
   const handleImageUploadClick = () => {
@@ -128,97 +185,32 @@ function App() {
         setMessages(prev => [...prev, uploadMessage]);
         setIsLoading(true);
 
-        // --- SEND IMAGE DIRECTLY TO BACKEND --- 
-        console.log('Sending image directly to backend for analysis.');
-        const payload = {
-            model: 'gpt-4o', // Or your desired model
-            messages: [
-              {
-                role: 'user',
-                content: [
-                  { type: 'text', text: 'Describe this image objectively in one or two sentences.' }, // Fixed prompt
-                  { 
-                    type: 'image_url',
-                    image_url: { url: base64Image } 
-                  }
-                ]
-              }
-            ]
-        };
-
+        // Call backend to upload image and get temporary ID
         try {
-            const response = await fetch('http://localhost:5001/v1/chat/completions', {
-              method: 'POST',
-              headers: {
-                'Content-Type': 'application/json'
-              },
-              body: JSON.stringify(payload)
-            });
+          const uploadResponse = await fetch('http://localhost:5001/upload_image', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ imageData: base64Image }),
+          });
+          if (!uploadResponse.ok) {
+            throw new Error(`Upload failed: ${uploadResponse.status}`);
+          }
+          const uploadResult = await uploadResponse.json();
+          console.log('Image upload successful, tempId:', uploadResult.temporaryId);
+          setTemporaryId(uploadResult.temporaryId);
 
-            if (!response.ok) {
-              throw new Error(`HTTP error! status: ${response.status}`);
-            }
-
-            const result = await response.json();
-            const aiText = result?.choices?.[0]?.message?.content || 'No description received.';
-            
-            // Add AI description to chat
-            const descriptionMessage = {
-              content: `Image Analysis: ${aiText}`,
-              sender: 'ai', // Or 'system'
-              timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-            };
-            setMessages(prev => [...prev, descriptionMessage]);
-
-            // --- REGISTER CONTEXT WITH BACKEND --- 
-            try {
-                console.log('Registering image context with backend...');
-                const contextResponse = await fetch('http://localhost:5001/register_image_context', {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                    },
-                    body: JSON.stringify({ description: aiText }),
-                });
-                if (!contextResponse.ok) {
-                     const errorText = await contextResponse.text();
-                     throw new Error(`Failed to register context: ${contextResponse.status} ${errorText}`);
-                }
-                console.log('Image context registered successfully.');
-                // Add a system message (optional)
-                const contextRegMessage = {
-                  content: `Context registered for image: ${file.name}`,
-                  sender: 'system',
-                  timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-                };
-                setMessages(prev => [...prev, contextRegMessage]);
-
-            } catch (contextError) {
-                 console.error('Error registering image context:', contextError);
-                 const errorContextMessage = {
-                    content: `Error registering context: ${contextError.message}`,
-                    sender: 'system',
-                    timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-                    isError: true
-                  };
-                setMessages(prev => [...prev, errorContextMessage]);
-            }
-            // --- END CONTEXT REGISTRATION ---
+          // If a conversation is already active, associate immediately
+          if (currentConversationId) {
+            associateImageContext(currentConversationId, uploadResult.temporaryId);
+          }
 
         } catch (error) {
-            console.error('Direct image analysis error:', error);
-            const errorMessage = {
-              content: `Error analyzing image: ${error.message}`,
-              sender: 'system',
-              timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-              isError: true
-            };
-            setMessages(prev => [...prev, errorMessage]);
+          console.error('Error uploading image:', error);
+          setMessages(prev => [...prev, { content: `Error uploading image: ${error.message}`, sender: 'system', timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }), isError: true }]);
+          setPreviewUrl(null); // Clear preview on error
         } finally {
-            setIsLoading(false);
-            // Don't clear previewUrl here, keep it visible
+          setIsLoading(false);
         }
-        // --- END DIRECT IMAGE SEND ---
     };
     reader.onerror = (error) => {
         console.error('FileReader error:', error);
@@ -240,6 +232,8 @@ function App() {
       await endSession();
       setPreviewUrl(null); // Clear image preview on disconnect
       setImageFile(null);
+      setCurrentConversationId(null); // Clear conversation ID on disconnect
+      setTemporaryId(null); // Also clear temp ID
     } else if (status === 'disconnected') {
       console.log('Attempting to start session...');
       try {
@@ -254,11 +248,22 @@ function App() {
         // 2. Start the session
         setIsLoading(true);
         console.log('Starting session with agent r7QeXEUadxgIchsAQYax...');
-        const conversationId = await startSession({ 
+        const sessionStartResult = await startSession({ 
           agentId: 'r7QeXEUadxgIchsAQYax',
         });
-        console.log('Session started, ID:', conversationId);
-        setTranscript('');
+        console.log('Session started, ID:', sessionStartResult);
+
+        // Store the ID - even if it's null/undefined, this will help us debug
+        setCurrentConversationId(sessionStartResult);
+
+        // Immediately try to associate context if both IDs exist
+        if (temporaryId && sessionStartResult) {
+          console.log('Associating image context...');
+          await associateImageContext(sessionStartResult, temporaryId);
+        } else {
+          console.log('No temporaryId found, skipping immediate association.');
+        }
+
       } catch (error) {
         console.error('Failed to start session:', error);
         const errorType = error.name === 'NotAllowedError' || error.name === 'PermissionDeniedError' 
@@ -278,18 +283,37 @@ function App() {
     }
   };
 
+  // Add a heartbeat effect to check if the connection is still alive
+  useEffect(() => {
+    let heartbeatInterval;
+    
+    if (status === 'connected') {
+      // Set up a heartbeat to monitor the connection
+      heartbeatInterval = setInterval(() => {
+        console.log('Connection heartbeat check:', status);
+        // This just logs to keep track of connection status
+      }, 5000);
+    }
+    
+    return () => {
+      if (heartbeatInterval) clearInterval(heartbeatInterval);
+    };
+  }, [status]);
+
   return (
     <div className="app-container">
       <h1>ArtSensei Voice & Image Module</h1>
       
-      {/* Status display */}
+      {/* Status display with improved mobile UI */}
       <div className="status-bar">
         <div className="status-indicator">
-          Status: {status || 'disconnected'} | AI Speaking: {isSpeaking ? 'Yes' : 'No'}
+          <span className={`status-dot ${status === 'connected' ? 'connected' : ''}`}></span>
+          <span className="status-text">{status || 'disconnected'}</span>
+          {isSpeaking && <span className="speaking-indicator">AI Speaking</span>}
         </div>
         {transcript && (
           <div className="transcript-display">
-            Live Transcript: {transcript}
+            {transcript}
           </div>
         )}
       </div>
