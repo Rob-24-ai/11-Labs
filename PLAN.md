@@ -53,8 +53,9 @@ The plan below details the steps to build this standalone Image Reader Module AP
 *   **Phase 1.5: Custom LLM Endpoint for ElevenLabs**
     *   [X] Implement `/v1/chat/completions` endpoint (OpenAI format)
     *   [X] Handle `messages` array (including image URLs/data)
-    *   [X] Implement Session State Management (In-memory currently)
-    *   [X] Integrate Image Analysis logic within the chat completion flow
+    *   [X] Implement Session State Management (In-memory currently - using global variable for context)
+    *   [X] Integrate Image Analysis logic within the chat completion flow (via backend description injection)
+    *   *NOTE: Current method injects initial text description. True interactivity requires passing image data per-turn.*
 
 ---
 
@@ -100,7 +101,7 @@ The plan below details the steps to build this standalone Image Reader Module AP
 ## Stage 3: Frontend Development
 
 **Goal:** Create a web interface using React or Next.js to interact with the ElevenLabs agent (powered by our backend).
-**Status:** In Progress - Basic functionality working, image integration needs testing
+**Status:** In Progress - Basic voice chat and direct image analysis working. Backend context injection implemented, needs testing. Interactive image discussion is next challenge.
 
 *   **Phase 3.1: Basic UI Setup**
     *   [X] Initialize Frontend project (React with Vite or Next.js) *(See: Mobile Build Guide.md - Sec I, III)*
@@ -122,11 +123,11 @@ The plan below details the steps to build this standalone Image Reader Module AP
 *   **Phase 3.3: Image Input Integration**
     *   [X] Add UI elements for image file upload *(See: Mobile Build Guide.md - Sec II.B)*
     *   [ ] (Optional) Add UI elements for camera capture *(See: Mobile Build Guide.md - Sec II.E, IV.B)*
-    *   [ ] Modify frontend logic to send image data (likely as base64 or a URL) as part of the conversation context to ElevenLabs/backend. - *Implementation in progress*
+    *   [X] Modify frontend logic to send image analysis *description* to a backend endpoint (`/register_image_context`) after direct analysis.
+    *   [ ] **CHALLENGE:** Modify backend/frontend to pass *image data* (not just description) alongside user utterances during the voice session to enable interactive Q&A about the image. Current backend injects description only.
     *   [ ] Handle camera permissions and stream display *(See: Mobile Build Guide.md - Sec II.E, IV.B)*
 
 ---
-
 ## Stage 4: Testing & Refinement
 
 **Goal:** Ensure end-to-end functionality and apply optional improvements.
@@ -135,7 +136,8 @@ The plan below details the steps to build this standalone Image Reader Module AP
     *   [X] Test Backend API Standalone (Phases 1.1-1.5) - *Initial tests done*
     *   [X] Test ElevenLabs <-> Backend Integration (Phase 2.1/2.2) - *Confirmed via ElevenLabs playground*
     *   [X] Test Frontend <-> ElevenLabs Integration (Phase 3.2) - *Voice interaction working*
-    *   [ ] Test Full Flow: Frontend Image Upload -> ElevenLabs -> Backend Analysis -> Frontend Response (Voice/Text) - *Implementation in progress, needs testing*
+    *   [ ] Test Full Flow (Description Injection): Frontend Image Upload -> Backend Analysis -> Context Registration -> Voice Start -> Backend Context Injection -> Voice Response
+    *   [ ] Test Full Flow (Interactive): Test the ability to ask follow-up questions about the image via voice.
 
 *   **Phase 4.2: Optional Refinements**
     *   [ ] Advanced Prompting Techniques (Backend/Frontend)
