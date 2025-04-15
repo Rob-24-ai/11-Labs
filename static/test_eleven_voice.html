@@ -1,0 +1,318 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ElevenLabs Voice Test</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            background-color: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        button {
+            padding: 10px 15px;
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            margin-right: 10px;
+            margin-bottom: 10px;
+        }
+        button:disabled {
+            background-color: #cccccc;
+        }
+        .status {
+            margin-top: 20px;
+            padding: 10px;
+            border-radius: 4px;
+        }
+        .connected {
+            background-color: #e8f5e9;
+            border: 1px solid #81c784;
+        }
+        .disconnected {
+            background-color: #ffebee;
+            border: 1px solid #e57373;
+        }
+        #logContainer {
+            margin-top: 20px;
+            padding: 10px;
+            background-color: #f8f9fa;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            max-height: 300px;
+            overflow-y: auto;
+            font-family: monospace;
+            font-size: 14px;
+        }
+        .log-entry {
+            margin-bottom: 5px;
+            border-bottom: 1px solid #eee;
+            padding-bottom: 5px;
+        }
+        .log-time {
+            color: #888;
+            margin-right: 5px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>ElevenLabs Voice Test</h1>
+        
+        <div>
+            <h3>Configuration</h3>
+            <div>
+                <label for="signedUrlField">Signed URL:</label>
+                <input type="text" id="signedUrlField" style="width: 100%; margin-bottom: 10px;" placeholder="Leave empty to fetch from backend">
+            </div>
+            <div>
+                <label for="backendUrlField">Backend URL:</label>
+                <input type="text" id="backendUrlField" value="http://localhost:5003" style="width: 100%; margin-bottom: 10px;">
+            </div>
+            <div>
+                <label for="agentIdField">Agent ID (optional):</label>
+                <input type="text" id="agentIdField" value="WLT1Fh5g2EpEfZROzscQ" style="width: 100%;">
+            </div>
+        </div>
+        
+        <div style="margin-top: 20px;">
+            <button id="connectBtn">Connect</button>
+            <button id="disconnectBtn" disabled>Disconnect</button>
+            <button id="testSpeechBtn" disabled>Test "Hello"</button>
+        </div>
+        
+        <div id="statusContainer" class="status disconnected">
+            <p>Status: <span id="connectionStatus">Disconnected</span></p>
+            <p>Agent Speaking: <span id="speakingStatus">No</span></p>
+        </div>
+        
+        <div id="logContainer">
+            <div class="log-entry">
+                <span class="log-time">[System]</span>
+                <span>Ready to connect to ElevenLabs</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- Load the ElevenLabs SDK -->
+    <script src="https://cdn.jsdelivr.net/npm/@11labs/conversation@0.2.4/dist/conversation.js"></script>
+    
+    <script>
+        // Elements
+        const connectBtn = document.getElementById('connectBtn');
+        const disconnectBtn = document.getElementById('disconnectBtn');
+        const testSpeechBtn = document.getElementById('testSpeechBtn');
+        const connectionStatus = document.getElementById('connectionStatus');
+        const speakingStatus = document.getElementById('speakingStatus');
+        const statusContainer = document.getElementById('statusContainer');
+        const logContainer = document.getElementById('logContainer');
+        const signedUrlField = document.getElementById('signedUrlField');
+        const backendUrlField = document.getElementById('backendUrlField');
+        const agentIdField = document.getElementById('agentIdField');
+        
+        // Conversation instance
+        let conversation = null;
+        
+        // Logging function
+        function log(message, type = 'info') {
+            const entry = document.createElement('div');
+            entry.className = 'log-entry';
+            
+            const time = document.createElement('span');
+            time.className = 'log-time';
+            time.textContent = `[${new Date().toLocaleTimeString()}]`;
+            
+            const content = document.createElement('span');
+            content.textContent = ' ' + message;
+            if (type === 'error') {
+                content.style.color = '#e53935';
+            } else if (type === 'success') {
+                content.style.color = '#43a047';
+            }
+            
+            entry.appendChild(time);
+            entry.appendChild(content);
+            logContainer.appendChild(entry);
+            logContainer.scrollTop = logContainer.scrollHeight;
+        }
+        
+        // Update UI state
+        function updateUIState(isConnected, isSpeaking = false) {
+            connectBtn.disabled = isConnected;
+            disconnectBtn.disabled = !isConnected;
+            testSpeechBtn.disabled = !isConnected;
+            
+            connectionStatus.textContent = isConnected ? 'Connected' : 'Disconnected';
+            speakingStatus.textContent = isSpeaking ? 'Yes' : 'No';
+            
+            statusContainer.className = isConnected ? 'status connected' : 'status disconnected';
+        }
+        
+        // Fetch signed URL from backend
+        async function getSignedUrl() {
+            const backendUrl = backendUrlField.value;
+            log(`Fetching signed URL from ${backendUrl}/api/elevenlabs/get-signed-url`);
+            
+            try {
+                const response = await fetch(`${backendUrl}/api/elevenlabs/get-signed-url`);
+                if (!response.ok) {
+                    throw new Error(`Failed to fetch signed URL: ${response.status}`);
+                }
+                
+                const data = await response.json();
+                if (!data.signedUrl) {
+                    throw new Error('Signed URL not found in backend response');
+                }
+                
+                log(`Received signed URL: ${data.signedUrl}`, 'success');
+                return data.signedUrl;
+            } catch (error) {
+                log(`Error fetching signed URL: ${error.message}`, 'error');
+                throw error;
+            }
+        }
+        
+        // Initialize conversation
+        async function initConversation() {
+            log('Initializing conversation...');
+            
+            try {
+                // Request microphone permission
+                log('Requesting microphone permission...');
+                await navigator.mediaDevices.getUserMedia({ audio: true });
+                log('Microphone permission granted', 'success');
+                
+                // Get signed URL
+                let signedUrl;
+                if (signedUrlField.value.trim()) {
+                    signedUrl = signedUrlField.value.trim();
+                    log('Using provided signed URL');
+                } else {
+                    signedUrl = await getSignedUrl();
+                }
+                
+                const agentId = agentIdField.value.trim();
+                const config = { 
+                    url: signedUrl,
+                    autoPlayAudio: true,
+                    enableAudio: true
+                };
+                
+                if (agentId) {
+                    config.agentId = agentId;
+                    log(`Using agent ID: ${agentId}`);
+                }
+                
+                log('Configuration for conversation:', 'info');
+                log(JSON.stringify(config), 'info');
+                
+                // Create the conversation
+                if (window.ElevenLabs && window.ElevenLabs.Conversation) {
+                    log('Creating conversation instance...');
+                    conversation = new window.ElevenLabs.Conversation({
+                        ...config,
+                        onConnect: handleConnect,
+                        onDisconnect: handleDisconnect,
+                        onMessage: handleMessage,
+                        onError: handleError
+                    });
+                } else {
+                    throw new Error('ElevenLabs SDK not properly loaded');
+                }
+                
+                log('Connecting to ElevenLabs...');
+                const conversationId = await conversation.start();
+                log(`Connection established with ID: ${conversationId}`, 'success');
+                
+                updateUIState(true);
+                return conversationId;
+            } catch (error) {
+                log(`Error initializing conversation: ${error.message}`, 'error');
+                updateUIState(false);
+                throw error;
+            }
+        }
+        
+        // Event handlers
+        function handleConnect() {
+            log('Connection established', 'success');
+            updateUIState(true);
+        }
+        
+        function handleDisconnect() {
+            log('Connection closed');
+            updateUIState(false);
+            conversation = null;
+        }
+        
+        function handleMessage(message) {
+            log(`Received message: ${JSON.stringify(message)}`);
+            
+            if (message.type === 'agent_speaking_started') {
+                speakingStatus.textContent = 'Yes';
+            } else if (message.type === 'agent_speaking_finished') {
+                speakingStatus.textContent = 'No';
+            }
+            
+            if (message.message) {
+                log(`Agent: "${message.message}"`, 'success');
+            }
+        }
+        
+        function handleError(error) {
+            log(`Error: ${error.message}`, 'error');
+            updateUIState(false);
+        }
+        
+        // Button event listeners
+        connectBtn.addEventListener('click', async () => {
+            connectBtn.disabled = true;
+            try {
+                await initConversation();
+            } catch (error) {
+                connectBtn.disabled = false;
+            }
+        });
+        
+        disconnectBtn.addEventListener('click', async () => {
+            if (conversation) {
+                log('Disconnecting...');
+                try {
+                    await conversation.disconnect();
+                    log('Disconnected successfully');
+                } catch (error) {
+                    log(`Error disconnecting: ${error.message}`, 'error');
+                }
+                updateUIState(false);
+            }
+        });
+        
+        testSpeechBtn.addEventListener('click', async () => {
+            if (conversation) {
+                log('Sending test message: "Hello"');
+                try {
+                    // For non-React environments, implement appropriate method to send a message
+                    await conversation.sendTextMessage("Hello");
+                    log('Test message sent', 'success');
+                } catch (error) {
+                    log(`Error sending test message: ${error.message}`, 'error');
+                }
+            }
+        });
+        
+        // Initialization
+        log('Page loaded. Click "Connect" to start');
+    </script>
+</body>
+</html>

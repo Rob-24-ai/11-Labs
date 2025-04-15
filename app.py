@@ -3,25 +3,45 @@ import json
 import uuid
 import base64 # Add base64 for potential image decoding
 import requests # Add requests for making API calls to ElevenLabs
-from flask import Flask, request, jsonify, Response, stream_with_context, send_from_directory # Add send_from_directory
+from flask import Flask, request, jsonify, Response, stream_with_context, send_from_directory, render_template # Add send_from_directory and render_template
 from flask_cors import CORS
 from dotenv import load_dotenv
 from llm_factory import create_llm_service # Import the factory
 from llm_service import LLMService # Import base class for type hinting
+import time # Add time import for response formatting
 
 # Load environment variables from .env file
 load_dotenv()
 
 app = Flask(__name__)
-CORS(app)  # Enable CORS for all routes
 
-# Simple in-memory session storage
+# --- Configure CORS --- #
+# Allow requests specifically from the Vite dev server origin
+# In production, you might want to restrict this to your deployed frontend URL
+# Using a more flexible pattern for local development as Vite port changes
+CORS(app, resources={r"/api/*": {"origins": ["http://localhost:*", "https://localhost:*"]}}) 
+# --- End CORS Configuration ---
+
+# --- Image Context Storage --- 
+# Simple in-memory dictionary to store the mapping between a conversation identifier
+# (e.g., user_id from ElevenLabs) and the filename of the image uploaded for that session.
+# This is a basic implementation; a more robust solution (Redis, DB) might be needed for production.
+image_context = {}
+# Define required configuration keys
+app.config['UPLOAD_FOLDER'] = os.path.abspath('./uploads')
+
+# Ensure the upload folder exists
+os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
+# --- End Image Context Storage ---
+
+# Simple in-memory session storage (kept for potential other uses)
 sessions = {}
 
+# Define the root route to serve the test form
 @app.route('/')
-def home():
-    """Simple route to check if the server is running."""
-    return "Image Reader Module API is running!"
+def index():
+    """Serve the main voice interaction interface."""
+    return render_template('voice_interface.html')
 
 @app.route('/analyze', methods=['POST'])
 def analyze_image():
@@ -79,7 +99,7 @@ def analyze_image():
                 "image_url": {"url": image_url}
             })
         elif image_data:
-            # Process image data
+            # Process image dataa
             base64_image = base64.b64encode(image_data).decode('utf-8')
             data_url = f"data:image/jpeg;base64,{base64_image}"
             messages[1]["content"].append({
@@ -210,6 +230,70 @@ def chat_completions():
             }), 500
         # --- End LLM Service Integration ---
 
+        # --- Image URL Injection Logic --- 
+        # Check if an image is associated with this conversation and inject its URL
+        
+        # Attempt to get a conversation identifier from the request
+        # IMPORTANT: Requires 'user_id' to be sent by ElevenLabs (enable 'Custom LLM extra body')
+        conversation_identifier = data.get('user_id')
+        
+        # Log the conversation identifier for debugging
+        app.logger.info(f"Processing request with conversation_identifier: {conversation_identifier}")
+        
+        if conversation_identifier:
+            # Check if there's an image associated with this conversation
+            image_filename = image_context.get(conversation_identifier)
+            
+            if image_filename:
+                # Use the request's host URL instead of relying on environment variable
+                base_url = request.host_url.rstrip('/')
+                
+                # Construct the full public URL for the image
+                public_image_url = f"{base_url}/serve_image/{image_filename}"
+                app.logger.info(f"Injecting image URL: {public_image_url} for conversation: {conversation_identifier}")
+
+                # Create the OpenAI-compatible message structure for the image
+                image_message = {
+                    "role": "user", # Image is typically associated with the user's turn
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": "(System note: The user has shared an image. Please analyze this image in the context of our conversation.)" 
+                        },
+                        {
+                            "type": "image_url",
+                            "image_url": {
+                                "url": public_image_url,
+                                "detail": "auto" # Using auto to let the LLM determine appropriate detail level
+                            }
+                        }
+                    ]
+                }
+                
+                # Insert the image message into the list at position 1 (after system prompt)
+                # This ensures the image is analyzed in the context of the system prompt
+                if messages and len(messages) > 0: 
+                    # If the first message is a system message, insert after it
+                    if messages[0].get('role') == 'system':
+                        messages.insert(1, image_message)
+                        app.logger.info("Inserted image after system message")
+                    else:
+                        # Otherwise insert at the beginning
+                        messages.insert(0, image_message)
+                        app.logger.info("Inserted image at beginning of messages")
+                else:
+                    # Handle edge case: If message list is empty
+                    messages.append(image_message)
+                    app.logger.info("Added image to empty messages list")
+                
+                # Remove the image from context AFTER successful injection
+                # This prevents the same image from being injected multiple times
+                image_context.pop(conversation_identifier, None)
+                app.logger.info(f"Removed image {image_filename} from context for conversation {conversation_identifier}")
+            else:
+                app.logger.debug(f"No image found for conversation {conversation_identifier}")
+        # --- End Image URL Injection Logic --- 
+
         # Log the request for debugging (moved down slightly)
         print(f"Received request for /v1/chat/completions using {llm_provider} model {model}")
         print(f"Request headers: {dict(request.headers)}")
@@ -222,7 +306,7 @@ def chat_completions():
 
         # --- Call LLM Service --- 
         try:
-            # Pass messages directly - the LLM service implementation should handle image data within
+            # Pass the potentially modified messages list to the LLM service
             llm_response = llm_service.chat_completion(
                 messages=messages,
                 model=model,
@@ -315,8 +399,7 @@ def chat_completions():
         print(f"Error in chat_completions: {str(e)}")
         # Log the full exception traceback for debugging
         import traceback
-        traceback.print_exc()
-        
+        traceback.print_exc() # Log full traceback for unexpected errors
         return jsonify({
             "error": {
                 "message": f"Internal server error: {str(e)}",
@@ -325,6 +408,88 @@ def chat_completions():
             }
         }), 500
 
+# --- Supporting Endpoints for Image Handling (To Be Implemented per INTEGRATION_PLAN.md) ---
+
+@app.route('/upload_image_get_url', methods=['POST'])
+def upload_image_get_url():
+    """Receive an image file and a conversation_id, save the image, and return a public URL.
+    Following INTEGRATION_PLAN.md, this endpoint:
+    1. Receives the image file and conversation_id
+    2. Validates the file
+    3. Saves it with a unique filename
+    4. Stores the mapping in image_context
+    5. Returns the public URL
+    """
+    try:
+        # Validate request contains necessary data
+        if 'image' not in request.files:
+            return jsonify({"error": "No image file provided"}), 400
+        
+        # Get the image file
+        image_file = request.files['image']
+        if image_file.filename == '':
+            return jsonify({"error": "Empty filename"}), 400
+            
+        # Get conversation_id from form or JSON
+        conversation_id = None
+        if request.form and 'conversation_id' in request.form:
+            conversation_id = request.form['conversation_id']
+        elif request.is_json and 'conversation_id' in request.json:
+            conversation_id = request.json['conversation_id']
+            
+        if not conversation_id:
+            return jsonify({"error": "No conversation_id provided"}), 400
+        
+        # Generate a unique filename (to prevent overwrites/collisions)
+        file_extension = os.path.splitext(image_file.filename)[1].lower()
+        unique_filename = f"{uuid.uuid4()}{file_extension}"
+        file_path = os.path.join(app.config['UPLOAD_FOLDER'], unique_filename)
+        
+        # Save the image file
+        image_file.save(file_path)
+        
+        # Store mapping in image_context
+        image_context[conversation_id] = unique_filename
+        app.logger.info(f"Saved image for conversation {conversation_id}: {unique_filename}")
+        
+        # Construct public URL for the image 
+        # Use request.host_url to get the base URL dynamically
+        base_url = request.host_url.rstrip('/')
+        public_image_url = f"{base_url}/serve_image/{unique_filename}"
+        
+        return jsonify({
+            "status": "success",
+            "message": "Image uploaded successfully",
+            "public_image_url": public_image_url,
+            "conversation_id": conversation_id
+        })
+    except Exception as e:
+        app.logger.error(f"Error in upload_image_get_url: {str(e)}")
+        return jsonify({"error": f"Server error: {str(e)}"}), 500
+
+@app.route('/serve_image/<filename>')
+def serve_image(filename):
+    """Securely serve an image file from the UPLOAD_FOLDER.
+    This uses Flask's send_from_directory which handles security concerns
+    like path traversal attacks.
+    """
+    try:
+        app.logger.debug(f"Serving image: {filename}")
+        # Sanitize filename (extra security on top of send_from_directory)
+        safe_filename = os.path.basename(filename)
+        
+        # Use Flask's secure file serving function
+        return send_from_directory(app.config['UPLOAD_FOLDER'], safe_filename)
+    except FileNotFoundError:
+        app.logger.warning(f"Image not found: {filename}")
+        return jsonify({"error": "Image not found"}), 404
+    except Exception as e:
+        app.logger.error(f"Error serving image {filename}: {str(e)}")
+        return jsonify({"error": f"Server error: {str(e)}"}), 500
+
+# --- End Supporting Endpoints ---
+
+
 # Add a route for '/chat/completions' to handle ElevenLabs requests without the v1 prefix
 @app.route('/chat/completions', methods=['POST'])
 def chat_completions_no_v1():
@@ -332,6 +497,63 @@ def chat_completions_no_v1():
     print("Received request for /chat/completions - forwarding to /v1/chat/completions handler")
     return chat_completions()
 
+# --- ElevenLabs Integration Endpoints ---
+
+@app.route('/api/elevenlabs/get-signed-url', methods=['GET'])
+def get_elevenlabs_signed_url():
+    """Generate a temporary signed URL for the ElevenLabs Conversational WebSocket.
+
+    This endpoint securely uses the backend API key to request a signed URL
+    from ElevenLabs, which the frontend can then use to connect without
+    exposing the secret key.
+    """
+    load_dotenv() # Ensure environment variables are loaded
+    api_key = os.getenv('ELEVENLABS_API_KEY')
+    print(f"[ElevenLabs URL Gen] Retrieved API Key: {'********' + api_key[-4:] if api_key else 'Not Found'}")
+    agent_id = os.getenv('ELEVENLABS_AGENT_ID')
+    print(f"[ElevenLabs URL Gen] Retrieved Agent ID: {agent_id}")
+
+    if not api_key or not agent_id:
+        print("[ElevenLabs URL Gen] Error: API Key or Agent ID missing in environment.")
+        return jsonify({"error": "Server configuration error: Missing ElevenLabs credentials."}), 500
+
+    elevenlabs_url = f"https://api.elevenlabs.io/v1/convai/conversation/get_signed_url?agent_id={agent_id}"
+    headers = {
+        "xi-api-key": api_key
+    }
+
+    try:
+        response = requests.get(elevenlabs_url, headers=headers)
+        response.raise_for_status()  # Raise an HTTPError for bad responses (4xx or 5xx)
+
+        data = response.json()
+        signed_url = data.get('signed_url')
+
+        if not signed_url:
+            print(f"[ElevenLabs URL Gen] Error: 'signed_url' key not found in response: {data}")
+            return jsonify({"error": "Failed to retrieve signed URL from ElevenLabs."}), 502 # Bad Gateway
+
+        # Return both the signed URL and the agent ID used to generate it
+        return jsonify({"signedUrl": signed_url, "agentId": agent_id})
+
+    except requests.exceptions.RequestException as e:
+        print(f"[ElevenLabs URL Gen] Error contacting ElevenLabs API: {e}")
+        # Check if response exists to provide more detail
+        error_detail = str(e)
+        if e.response is not None:
+            try:
+                error_detail = e.response.json() or e.response.text
+            except json.JSONDecodeError:
+                error_detail = e.response.text
+        return jsonify({"error": "Failed to communicate with ElevenLabs API.", "details": error_detail}), 502 # Bad Gateway
+    except Exception as e:
+        print(f"[ElevenLabs URL Gen] Unexpected error generating signed URL: {e}")
+        import traceback
+        traceback.print_exc() # Log full traceback for unexpected errors
+        return jsonify({"error": "An unexpected server error occurred."}), 500
+
+
+@app.route('/elevenlabs/tts', methods=['POST'])
 def send_to_elevenlabs_tts(text):
     """
     Send text to ElevenLabs for text-to-speech conversion or to a specific agent.
@@ -446,6 +668,38 @@ def generate_elevenlabs_audio(text, api_key):
         # Get voice ID from environment variables or use default
         voice_id = os.getenv('ELEVENLABS_VOICE_ID', 'pNInz6obpgDQGcFmaJgB')  # Default to Adam voice
         
+        if voice_id:
+            # Send to ElevenLabs agent
+            return generate_elevenlabs_audio_with_voice(text, voice_id, api_key)
+        else:
+            # Fall back to regular TTS if no voice ID
+            return {
+                "status": "error",
+                "message": "No voice ID provided"
+            }
+            
+    except Exception as e:
+        print(f"Error generating ElevenLabs audio: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return {
+            "status": "error",
+            "message": f"Error: {str(e)}"
+        }
+
+def generate_elevenlabs_audio_with_voice(text, voice_id, api_key):
+    """
+    Generate audio from text using ElevenLabs TTS API.
+    
+    Args:
+        text: The text to convert to speech
+        voice_id: The ID of the ElevenLabs voice
+        api_key: ElevenLabs API key
+        
+    Returns:
+        Dictionary with response information
+    """
+    try:
         # ElevenLabs API endpoint for text-to-speech
         url = f"https://api.elevenlabs.io/v1/text-to-speech/{voice_id}"
         
@@ -505,12 +759,13 @@ def generate_elevenlabs_audio(text, api_key):
 # Add a route to serve static files
 @app.route('/static/<path:filename>')
 def serve_static(filename):
-    return send_from_directory('static', filename)
+    static_folder = os.path.join(os.path.dirname(__file__), 'static')
+    os.makedirs(static_folder, exist_ok=True) # Ensure static exists
+    return send_from_directory(static_folder, filename)
 
 if __name__ == '__main__':
-    # Read port from environment variable or default to 5001
-    # Using a port other than 5000 to avoid potential conflicts with other Flask apps
-    port = int(os.environ.get('PORT', 5001))
-    # Run the app in debug mode for development (auto-reloads on code changes)
-    # Set debug=False for production
-    app.run(host='0.0.0.0', port=port, debug=True)
+    # Ensure environment variables are loaded once at startup
+    load_dotenv()
+    # Run the app
+    # Use host='0.0.0.0' to make it accessible on the network if needed
+    app.run(debug=True, port=5003) # Change port here

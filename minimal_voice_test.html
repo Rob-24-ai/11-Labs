@@ -1,0 +1,254 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Minimal ElevenLabs Voice Test</title>
+    <style>
+        body { 
+            font-family: sans-serif; 
+            max-width: 800px; 
+            margin: 0 auto; 
+            padding: 20px; 
+        }
+        #log {
+            background: #f5f5f5;
+            border: 1px solid #ddd;
+            padding: 10px;
+            height: 300px;
+            overflow-y: auto;
+            margin-top: 20px;
+            font-family: monospace;
+        }
+        button {
+            padding: 8px 16px;
+            margin-right: 8px;
+            background: #4CAF50;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+        button:disabled {
+            background: #ccc;
+        }
+        pre {
+            white-space: pre-wrap;
+            word-break: break-all;
+        }
+    </style>
+</head>
+<body>
+    <h1>Minimal ElevenLabs WebSocket Test</h1>
+    
+    <div>
+        <button id="fetchUrlBtn">1. Fetch Signed URL</button>
+        <button id="testMicBtn" disabled>2. Test Microphone</button>
+        <button id="connectBtn" disabled>3. Connect WebSocket</button>
+        <button id="sendTextBtn" disabled>4. Send "Hello"</button>
+        <button id="playAudioBtn" disabled>5. Play Test Audio</button>
+    </div>
+    
+    <div id="log"></div>
+    
+    <script>
+        // State
+        let signedUrl = '';
+        let socket = null;
+        let audioContext = null;
+        
+        // Elements
+        const log = document.getElementById('log');
+        const fetchUrlBtn = document.getElementById('fetchUrlBtn');
+        const testMicBtn = document.getElementById('testMicBtn');
+        const connectBtn = document.getElementById('connectBtn');
+        const sendTextBtn = document.getElementById('sendTextBtn');
+        const playAudioBtn = document.getElementById('playAudioBtn');
+        
+        // Helper functions
+        function logMessage(msg, type = 'info') {
+            const entry = document.createElement('div');
+            entry.innerHTML = `<span style="color:${type === 'error' ? 'red' : type === 'success' ? 'green' : 'black'}">[${new Date().toLocaleTimeString()}] ${msg}</span>`;
+            log.appendChild(entry);
+            log.scrollTop = log.scrollHeight;
+        }
+        
+        // Button event handlers
+        fetchUrlBtn.addEventListener('click', async () => {
+            logMessage('Fetching signed URL from backend...');
+            fetchUrlBtn.disabled = true;
+            
+            try {
+                const response = await fetch('http://localhost:5003/api/elevenlabs/get-signed-url');
+                if (!response.ok) {
+                    throw new Error(`HTTP error: ${response.status}`);
+                }
+                
+                const data = await response.json();
+                if (!data.signedUrl) {
+                    throw new Error('No signed URL found in response');
+                }
+                
+                signedUrl = data.signedUrl;
+                logMessage(`Signed URL received: ${signedUrl}`, 'success');
+                
+                testMicBtn.disabled = false;
+            } catch (error) {
+                logMessage(`Error fetching signed URL: ${error.message}`, 'error');
+                fetchUrlBtn.disabled = false;
+            }
+        });
+        
+        testMicBtn.addEventListener('click', async () => {
+            logMessage('Testing microphone access...');
+            testMicBtn.disabled = true;
+            
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                logMessage('Microphone access granted!', 'success');
+                
+                // Just for testing, we're stopping the stream right away
+                stream.getTracks().forEach(track => track.stop());
+                
+                connectBtn.disabled = false;
+            } catch (error) {
+                logMessage(`Microphone error: ${error.message}`, 'error');
+                testMicBtn.disabled = false;
+            }
+        });
+        
+        connectBtn.addEventListener('click', () => {
+            logMessage(`Connecting to WebSocket: ${signedUrl}`);
+            connectBtn.disabled = true;
+            
+            try {
+                // Create WebSocket
+                socket = new WebSocket(signedUrl);
+                
+                // Setup event handlers
+                socket.onopen = () => {
+                    logMessage('WebSocket connection established!', 'success');
+                    sendTextBtn.disabled = false;
+                    playAudioBtn.disabled = false;
+                };
+                
+                socket.onmessage = (event) => {
+                    if (typeof event.data === 'string') {
+                        // Text data
+                        try {
+                            const data = JSON.parse(event.data);
+                            logMessage(`Received message: ${JSON.stringify(data, null, 2)}`);
+                        } catch (e) {
+                            logMessage(`Received non-JSON message: ${event.data}`);
+                        }
+                    } else {
+                        // Binary data (likely audio)
+                        logMessage(`Received binary data (${event.data.size} bytes) - This is likely audio!`, 'success');
+                        
+                        // Try to play the audio
+                        playAudioFromBlob(event.data);
+                    }
+                };
+                
+                socket.onclose = (event) => {
+                    logMessage(`WebSocket closed: ${event.code} ${event.reason}`);
+                    socket = null;
+                    connectBtn.disabled = false;
+                    sendTextBtn.disabled = true;
+                    playAudioBtn.disabled = true;
+                };
+                
+                socket.onerror = (error) => {
+                    logMessage(`WebSocket error: ${error}`, 'error');
+                };
+            } catch (error) {
+                logMessage(`Error creating WebSocket: ${error.message}`, 'error');
+                connectBtn.disabled = false;
+            }
+        });
+        
+        sendTextBtn.addEventListener('click', () => {
+            if (!socket || socket.readyState !== WebSocket.OPEN) {
+                logMessage('WebSocket not connected', 'error');
+                return;
+            }
+            
+            logMessage('Sending test message: "Hello"');
+            
+            // Format matches ElevenLabs' expected format
+            const message = {
+                text: "Hello",
+                type: "text"
+            };
+            
+            socket.send(JSON.stringify(message));
+            logMessage('Message sent', 'success');
+        });
+        
+        playAudioBtn.addEventListener('click', async () => {
+            logMessage('Testing audio playback with a test tone...');
+            
+            try {
+                // Create audio context if not exists
+                if (!audioContext) {
+                    audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                }
+                
+                // Create oscillator (test tone)
+                const oscillator = audioContext.createOscillator();
+                oscillator.type = 'sine';
+                oscillator.frequency.setValueAtTime(440, audioContext.currentTime); // 440 Hz - A4
+                
+                // Connect and play
+                oscillator.connect(audioContext.destination);
+                oscillator.start();
+                
+                // Stop after 1 second
+                setTimeout(() => {
+                    oscillator.stop();
+                    logMessage('Test tone played successfully', 'success');
+                    logMessage('If you heard a beep sound, your audio output is working!', 'success');
+                }, 1000);
+            } catch (error) {
+                logMessage(`Error playing test tone: ${error.message}`, 'error');
+            }
+        });
+        
+        // Function to play audio from binary blob
+        async function playAudioFromBlob(blob) {
+            try {
+                // Create audio context if not exists
+                if (!audioContext) {
+                    audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                }
+                
+                logMessage('Attempting to decode and play received audio...');
+                
+                // Convert blob to array buffer
+                const arrayBuffer = await blob.arrayBuffer();
+                
+                // Decode audio data
+                const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
+                
+                // Create source and play
+                const source = audioContext.createBufferSource();
+                source.buffer = audioBuffer;
+                source.connect(audioContext.destination);
+                source.start(0);
+                
+                logMessage('Playing received audio!', 'success');
+                
+                // Log when playback ends
+                source.onended = () => {
+                    logMessage('Audio playback ended');
+                };
+            } catch (error) {
+                logMessage(`Error playing audio: ${error.message}`, 'error');
+            }
+        }
+        
+        // Initial log
+        logMessage('Page loaded. Click "Fetch Signed URL" to begin testing.');
+    </script>
+</body>
+</html>

@@ -1,0 +1,111 @@
+.App {
+  max-width: 800px; /* Max width for larger screens */
+  margin: 0 auto; /* Center the container */
+  padding: 1rem; /* Padding for mobile */
+  flex-grow: 1; /* Allow App to fill available space */
+  display: flex;
+  flex-direction: column;
+  align-items: center; /* Center items horizontally */
+  width: 100%; /* Ensure it takes full width available */
+}
+
+.App h1 {
+  color: #1a1a1a;
+  margin-bottom: 1.5rem;
+  text-align: center;
+}
+
+/* Status container */
+.status-container {
+  margin-bottom: 1rem;
+  padding: 0.75rem;
+  border: 1px solid #ccc;
+  border-radius: 8px;
+  background-color: #fff;
+  min-width: 250px; /* Ensure it has some width */
+  text-align: center;
+}
+
+.status-container p {
+  margin-bottom: 0.25rem;
+}
+
+/* Controls container */
+.controls-container {
+  display: flex;
+  gap: 1rem; /* Space between buttons */
+  margin-bottom: 1.5rem;
+}
+
+.controls-container button {
+  padding: 0.75rem 1.5rem; /* Decent padding for touch */
+  font-size: 1rem;
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+  background-color: #007bff;
+  color: white;
+  transition: background-color 0.2s ease;
+  min-width: 120px; /* Minimum width */
+  min-height: 44px; /* Minimum touch target height */
+}
+
+.controls-container button:disabled {
+  background-color: #ccc;
+  cursor: not-allowed;
+}
+
+.controls-container button:not(:disabled):hover {
+  background-color: #0056b3;
+}
+
+/* Transcript container */
+.transcript-container {
+  width: 100%; /* Take full width */
+  background-color: #fff;
+  border: 1px solid #ddd;
+  border-radius: 8px;
+  padding: 1rem;
+  flex-grow: 1; /* Allow transcript box to grow */
+  display: flex;
+  flex-direction: column;
+  max-height: 60vh; /* Limit height to prevent overflow */
+}
+
+.transcript-container h2 {
+  margin-bottom: 0.5rem;
+  text-align: center;
+  font-size: 1.2rem;
+}
+
+.transcript-box {
+  flex-grow: 1;
+  overflow-y: auto; /* Enable scrolling */
+  padding: 0.5rem;
+  border: 1px solid #eee;
+  border-radius: 4px;
+}
+
+.message {
+  margin-bottom: 0.75rem;
+  padding: 0.5rem 0.75rem;
+  border-radius: 15px;
+  max-width: 80%;
+  word-wrap: break-word;
+}
+
+.message.user {
+  background-color: #d1e7fd; /* Light blue for user */
+  color: #052c65;
+  margin-left: auto; /* Align user messages to the right */
+  border-bottom-right-radius: 0;
+}
+
+.message.agent {
+  background-color: #e2e3e5; /* Light gray for agent */
+  color: #383d41;
+  margin-right: auto; /* Align agent messages to the left */
+  border-bottom-left-radius: 0;
+}
+
+/* Add more styles as components are built */

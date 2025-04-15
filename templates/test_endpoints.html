@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>API Test Form</title>
+    <style>
+        body { font-family: sans-serif; padding: 20px; }
+        .section { margin-bottom: 30px; border: 1px solid #ccc; padding: 15px; border-radius: 5px; }
+        label { display: block; margin-bottom: 5px; font-weight: bold; }
+        input[type="text"], input[type="file"], textarea {
+            width: 95%;
+            padding: 8px;
+            margin-bottom: 10px;
+            border: 1px solid #ccc;
+            border-radius: 3px;
+        }
+        button { padding: 10px 15px; background-color: #007bff; color: white; border: none; border-radius: 3px; cursor: pointer; }
+        button:hover { background-color: #0056b3; }
+        pre { background-color: #f4f4f4; padding: 10px; border: 1px solid #ddd; border-radius: 3px; white-space: pre-wrap; word-wrap: break-word; }
+        .response { margin-top: 15px; }
+        .hidden { display: none; }
+    </style>
+</head>
+<body>
+
+    <h1>API Test Interface</h1>
+
+    <div class="section">
+        <h2>1. Upload Image</h2>
+        <form id="upload-form">
+            <label for="conversation-id-upload">Conversation ID:</label>
+            <input type="text" id="conversation-id-upload" name="conversation_id" required placeholder="Enter a unique ID for this conversation">
+
+            <label for="image-file">Image File:</label>
+            <input type="file" id="image-file" name="image" accept="image/*" required>
+
+            <button type="submit">Upload Image</button>
+        </form>
+        <div id="upload-response" class="response hidden">
+            <h3>Upload Response:</h3>
+            <pre></pre>
+        </div>
+    </div>
+
+    <div class="section">
+        <h2>2. Chat Completion</h2>
+        <form id="chat-form">
+            <label for="conversation-id-chat">Conversation ID (Optional, link to uploaded image):</label>
+            <input type="text" id="conversation-id-chat" name="conversation_id" placeholder="Use the same ID from Step 1 to include the image">
+
+            <label for="chat-message">Message:</label>
+            <textarea id="chat-message" name="message" rows="4" required placeholder="Enter your message here"></textarea>
+
+            <button type="submit">Send Message</button>
+        </form>
+        <div id="chat-response" class="response hidden">
+            <h3>Chat Response:</h3>
+            <pre></pre>
+        </div>
+    </div>
+
+    <script>
+        const uploadForm = document.getElementById('upload-form');
+        const uploadResponseDiv = document.getElementById('upload-response');
+        const uploadResponsePre = uploadResponseDiv.querySelector('pre');
+
+        const chatForm = document.getElementById('chat-form');
+        const chatResponseDiv = document.getElementById('chat-response');
+        const chatResponsePre = chatResponseDiv.querySelector('pre');
+        
+        // Auto-populate chat conversation ID after successful upload
+        let lastConversationId = '';
+
+        // --- Image Upload Handler ---
+        uploadForm.addEventListener('submit', async (event) => {
+            event.preventDefault();
+            uploadResponseDiv.classList.add('hidden');
+
+            const formData = new FormData(uploadForm);
+            const conversationId = formData.get('conversation_id');
+            lastConversationId = conversationId; // Store for chat form
+
+            try {
+                const response = await fetch('/upload_image_get_url', {
+                    method: 'POST',
+                    body: formData,
+                });
+
+                const result = await response.json();
+                uploadResponsePre.textContent = JSON.stringify(result, null, 2);
+                uploadResponseDiv.classList.remove('hidden');
+
+                // Auto-fill the chat form's conversation ID
+                document.getElementById('conversation-id-chat').value = conversationId;
+
+            } catch (error) {
+                uploadResponsePre.textContent = `Error: ${error.message}`;
+                uploadResponseDiv.classList.remove('hidden');
+            }
+        });
+
+        // --- Chat Completion Handler ---
+        chatForm.addEventListener('submit', async (event) => {
+            event.preventDefault();
+            chatResponseDiv.classList.add('hidden');
+
+            const conversationId = document.getElementById('conversation-id-chat').value;
+            const message = document.getElementById('chat-message').value;
+
+            // Construct the OpenAI-compatible payload
+            const payload = {
+                model: "gpt-4o", // Or get from config/user input
+                messages: [
+                    { "role": "user", "content": message }
+                ],
+                stream: false // Set to true if you want to test streaming
+            };
+
+            // Add user_id (conversation_identifier) if provided
+            if (conversationId) {
+                payload.user_id = conversationId; 
+            }
+
+            try {
+                const response = await fetch('/v1/chat/completions', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify(payload),
+                });
+
+                const result = await response.json();
+                chatResponsePre.textContent = JSON.stringify(result, null, 2);
+                chatResponseDiv.classList.remove('hidden');
+
+            } catch (error) {
+                chatResponsePre.textContent = `Error: ${error.message}`;
+                chatResponseDiv.classList.remove('hidden');
+            }
+        });
+
+    </script>
+
+</body>
+</html>

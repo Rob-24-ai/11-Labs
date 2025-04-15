@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Voice Interface</title>
+    <style>
+        body { font-family: sans-serif; display: flex; flex-direction: column; align-items: center; padding-top: 50px; }
+        #status { margin-top: 20px; font-style: italic; color: #555; }
+        #transcript { margin-top: 10px; font-weight: bold; min-height: 1.2em; }
+        #response { margin-top: 10px; color: blue; min-height: 1.2em; }
+        button { padding: 15px 30px; font-size: 16px; cursor: pointer; }
+        .listening { background-color: #ffcccc; }
+        .processing { background-color: #ffffcc; }
+    </style>
+</head>
+<body>
+
+    <h1>Voice Interaction</h1>
+
+    <button id="startButton">Start Talking</button>
+
+    <div id="status">Click "Start Talking" and grant microphone permission.</div>
+    <div>Your Speech: <span id="transcript">...</span></div>
+    <div>Agent Response: <span id="response">...</span></div>
+
+    <script>
+        const startButton = document.getElementById('startButton');
+        const statusDiv = document.getElementById('status');
+        const transcriptSpan = document.getElementById('transcript');
+        const responseSpan = document.getElementById('response');
+
+        let recognition = null;
+        let isListening = false;
+
+        // Check for browser support
+        if ('webkitSpeechRecognition' in window) {
+            recognition = new webkitSpeechRecognition();
+            recognition.continuous = false; // Stop listening after a pause
+            recognition.interimResults = true; // Show results as they come
+            recognition.lang = 'en-US';
+
+            recognition.onstart = () => {
+                isListening = true;
+                startButton.textContent = 'Stop Talking';
+                startButton.classList.add('listening');
+                statusDiv.textContent = 'Listening... Speak now.';
+                transcriptSpan.textContent = '...';
+                responseSpan.textContent = '...';
+            };
+
+            recognition.onresult = (event) => {
+                let interimTranscript = '';
+                let finalTranscript = '';
+
+                for (let i = event.resultIndex; i < event.results.length; ++i) {
+                    if (event.results[i].isFinal) {
+                        finalTranscript += event.results[i][0].transcript;
+                    } else {
+                        interimTranscript += event.results[i][0].transcript;
+                    }
+                }
+                transcriptSpan.textContent = finalTranscript || interimTranscript;
+                if (finalTranscript) {
+                    // We have a final transcript, stop listening and process
+                    stopListening(); 
+                    processTranscript(finalTranscript.trim());
+                }
+            };
+
+            recognition.onerror = (event) => {
+                statusDiv.textContent = `Error occurred in recognition: ${event.error}`;
+                console.error('Speech recognition error:', event);
+                stopListening(); // Ensure we stop if there's an error
+            };
+
+            recognition.onend = () => {
+                // This is called when recognition stops, either manually or automatically
+                if (isListening) { // If it stopped unexpectedly (e.g., silence timeout), reset state
+                   stopListening(); 
+                }
+            };
+
+        } else {
+            statusDiv.textContent = 'Speech Recognition not supported in this browser.';
+            startButton.disabled = true;
+        }
+
+        function startListening() {
+            if (recognition && !isListening) {
+                transcriptSpan.textContent = '...';
+                responseSpan.textContent = '...';
+                try {
+                    recognition.start();
+                } catch (e) {
+                    console.error("Error starting recognition:", e);
+                    statusDiv.textContent = 'Could not start listening. Try again.';
+                }
+            }
+        }
+
+        function stopListening() {
+            if (recognition && isListening) {
+                recognition.stop();
+                isListening = false;
+                startButton.textContent = 'Start Talking';
+                startButton.classList.remove('listening');
+                startButton.classList.remove('processing'); 
+                statusDiv.textContent = 'Click "Start Talking".';
+            }
+        }
+
+        startButton.addEventListener('click', () => {
+            if (isListening) {
+                stopListening();
+            } else {
+                startListening();
+            }
+        });
+        
+        async function processTranscript(text) {
+            if (!text) return;
+            statusDiv.textContent = 'Processing your request...';
+            startButton.classList.add('processing');
+            transcriptSpan.textContent = text;
+            responseSpan.textContent = 'Thinking...';
+            
+            console.log(`Sending text to backend: ${text}`);
+
+            // --- TODO: Send 'text' to backend (/v1/chat/completions) ---
+            // --- TODO: Get text response from backend ---
+            const backendResponseText = `(Placeholder response for: ${text})`; // Replace with actual fetch call
+            console.log(`Received text from backend: ${backendResponseText}`);
+            responseSpan.textContent = backendResponseText;
+
+            // --- TODO: Send 'backendResponseText' to TTS endpoint (/generate_audio) ---
+            // --- TODO: Get audio data/URL from TTS endpoint ---
+            // --- TODO: Play the audio response --- 
+            console.log("Playing audio placeholder...");
+            // Simulate audio finished playing
+            await new Promise(resolve => setTimeout(resolve, 1500)); // Simulate delay
+
+            statusDiv.textContent = 'Ready. Click "Start Talking".';
+            startButton.classList.remove('processing');
+        }
+
+    </script>
+
+</body>
+</html>

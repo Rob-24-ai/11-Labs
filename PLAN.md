@@ -9,9 +9,9 @@ The primary goal of this project is to create a backend API service (this "Image
 3.  Utilize a configurable Vision Large Language Model (VLLM), such as OpenAI's GPT-4o or Anthropic's Claude Sonnet, to perform analysis or answer questions about the image based on a provided prompt.
 4.  Return the textual analysis results via the API.
 
-This module is intended to function as a **Custom LLM provider for ElevenLabs Conversational AI**. Instead of using the webhook approach (where ElevenLabs' built-in LLM calls our API as a separate tool), we'll implement a Custom LLM server that handles both the conversation and image analysis in a unified system. This creates a more seamless architecture where a single AI system handles both the conversation flow and image understanding capabilities.
+This module is intended to function as a **Custom LLM provider for ElevenLabs Conversational AI**. Instead of using the webhook approach (where ElevenLabs' built-in LLM calls our API as a separate tool), we'll implement a Custom LLM server that handles both the conversation and image analysis in a unified system. This creates a more seamless architecture where a single AI system handles both the conversation flow and image understanding capabilities. **Crucially, this means our Flask backend acts *only* as the LLM provider endpoint called by ElevenLabs. The real-time voice input (Speech-to-Text) and voice output (Text-to-Speech) are handled directly between the frontend (using the ElevenLabs SDK) and the ElevenLabs Conversational AI service. Our backend does *not* process raw audio streams.**
 
-**Implementation Approach:** The final implementation will include a custom UI that handles both image uploads (file uploads and camera captures) and integrates with ElevenLabs Conversational AI agent for real-time live voice-to-voice interaction. We'll implement the **Custom LLM approach** rather than the webhook approach, allowing a single LLM to handle both conversation and image analysis. This provides full control over the user experience and creates a more cohesive system. Note that this specifically uses the Conversational AI agent capability with our custom LLM backend, not separate text-to-speech or speech-to-text services.
+**Implementation Approach:** The final implementation will include a custom UI that handles both image uploads (file uploads and camera captures) and integrates with ElevenLabs Conversational AI agent for real-time live voice-to-voice interaction. We'll implement the **Custom LLM approach** rather than the webhook approach, allowing a single LLM to handle both conversation and image analysis. This provides full control over the user experience and creates a more cohesive system. Note that this specifically uses the Conversational AI agent capability **with our custom LLM backend**, not separate text-to-speech or speech-to-text services *implemented by us*.
 
 The plan below details the steps to build this standalone Image Reader Module API.
 
@@ -102,22 +102,30 @@ The plan below details the steps to build this standalone Image Reader Module AP
 **Goal:** Create a web interface using React or Next.js to interact with the ElevenLabs agent (powered by our backend).
 **Status:** Ready to Begin
 
+**Architectural Note:** This stage focuses on building the user interface and integrating the **ElevenLabs SDK (e.g., `@11labs/react`)**. This SDK manages the direct interaction with the ElevenLabs service for capturing user speech and playing back synthesized audio responses in real-time.
+
 *   **Phase 3.1: Basic UI Setup**
-    *   [ ] Initialize Frontend project (React with Vite or Next.js) *(See: Mobile Build Guide.md - Sec I, III)*
+    *   [ ] Choose Frontend Framework (React/Next.js)
     *   [ ] Basic component structure for chat/interaction *(See: Mobile Build Guide.md - Sec II, III)*
     *   [ ] Implement basic responsive layout *(See: Mobile Build Guide.md - Sec I, II)*
     *   [ ] Ensure touch-friendly navigation and controls *(See: Mobile Build Guide.md - Sec II.A, II.B)*
 
 *   **Phase 3.2: ElevenLabs SDK Integration**
-    *   [ ] Install relevant SDK (`@11labs/react` or adjust for Next.js)
-    *   [ ] Implement `useConversation` hook or equivalent client-side logic
+    *   [X] Install relevant SDK (`@11labs/react` for Vite/React)
+    *   [X] Test SDK functionality with minimalist implementation (`test_eleven_voice.html` and `minimal_voice_test.html`)
+    *   [X] Identify and resolve issues with React's lifecycle management and WebSocket connections
+        * Resolved StrictMode interaction (initially removed, now stable with it re-enabled)
+        * Implemented proper connection cleanup / fixed useEffect dependency loop
+        * Separated connection management logic within App component
+    *   [ ] Implement `useConversation` hook with lifecycle-aware cleanup
     *   [ ] Connect UI to the configured ElevenLabs Agent ID
-    *   [ ] Handle voice input/output streaming *(See: Mobile Build Guide.md - Sec II.D, IV.A, IV.D)*
-    *   [ ] Implement UI feedback for voice state (listening, processing) *(See: Mobile Build Guide.md - Sec II.D)*
+    *   [ ] Handle voice input/output streaming with proper error handling *(See: Mobile Build Guide.md - Sec II.D, IV.A, IV.D)*
+    *   [ ] Implement UI feedback for connection status and voice state (connecting, connected, listening, processing) *(See: Mobile Build Guide.md - Sec II.D)*
     *   [ ] Display real-time text captions *(See: Mobile Build Guide.md - Sec II.F, IV.C)*
-    *   [ ] Reference:
-        *   [ElevenLabs React SDK Docs](https://elevenlabs.io/docs/conversational-ai/libraries/react)
-        *   [ElevenLabs Next.js Quickstart](https://elevenlabs.io/docs/conversational-ai/guides/quickstarts/next-js)
+    *   [ ] References:
+        * [ElevenLabs React SDK Docs](https://elevenlabs.io/docs/conversational-ai/libraries/react)
+        * [ElevenLabs Next.js Quickstart](https://elevenlabs.io/docs/conversational-ai/guides/quickstarts/next-js)
+        * Test implementations: `test_eleven_voice.html` and `minimal_voice_test.html`
 
 *   **Phase 3.3: Image Input Integration**
     *   [ ] Add UI elements for image file upload *(See: Mobile Build Guide.md - Sec II.B)*
@@ -144,3 +152,33 @@ The plan below details the steps to build this standalone Image Reader Module AP
     *   [ ] Response Caching (Backend)
     *   [ ] Scalability Configuration (Deployment)
     *   [ ] Monitoring & Logging Integration (Deployment)
+
+---
+
+## Stage 6: Modular LLM Provider Implementation
+
+**Goal:** Create a modular system to easily switch between different LLM providers (OpenAI, Gemini) with minimal code changes.
+
+*   **Phase 6.1: Central Configuration**
+    *   [ ] Create `llm_config.py` module to centralize provider configuration
+    *   [ ] Implement environment-based provider selection (`LLM_PROVIDER` variable)
+    *   [ ] Add conditional configuration for base URLs, API keys, and default models
+    *   [ ] Add basic validation and error handling for misconfiguration
+
+*   **Phase 6.2: Service Adaptation**
+    *   [ ] Modify `openai_service.py` to use the central configuration
+    *   [ ] Update client initialization to conditionally include base URL
+    *   [ ] Add provider-aware model selection logic
+    *   [ ] Implement minimal provider-specific message format adaptations if needed
+
+*   **Phase 6.3: Testing and Verification**
+    *   [ ] Test with OpenAI configuration to ensure baseline functionality
+    *   [ ] Test with Gemini configuration via compatibility endpoint
+    *   [ ] Compare image analysis capabilities between providers
+    *   [ ] Document any provider-specific limitations or considerations
+
+*   **Phase 6.4: CI/CD & Deployment Updates**
+    *   [ ] Update documentation with provider configuration instructions
+    *   [ ] Ensure all provider API keys are properly handled in deployment
+    *   [ ] Add provider selection to deployment configuration
+    *   [ ] (Optional) Implement provider fallback mechanism for resilience
