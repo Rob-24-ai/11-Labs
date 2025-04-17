@@ -15,8 +15,8 @@ function App() {
   const isMounted = useRef(true);
   
 
-  // Backend URL for fetching signed URL
-  const backendUrl = 'http://localhost:5003';
+  // Backend URL for fetching signed URL - use relative path when served from same domain
+  const backendUrl = '';  // Empty string will make fetch use relative paths
   
   // Initialize the ElevenLabs conversation hook
   const conversation = useConversation({
@@ -231,85 +231,60 @@ function App() {
       setError("Please select an image first.");
       return;
     }
-    // Ensure connection is established AND a sessionId is available
-    if (status !== 'connected' || !sessionId) {
-      setError("Please ensure you are connected to the voice agent and the connection is ready.");
-      console.warn("Upload prevented: Status is", status, "and sessionId is", sessionId);
-      return;
-    }
-
+    
+    // Allow upload even if not connected yet - the session ID will be stored
+    // and linked when the connection is established
     setIsUploading(true);
     setError(null);
     console.log("Uploading image:", selectedImage.name);
 
-    // Get the sessionId (it should be valid now)
-    console.log("Using VALID sessionId for image upload:", sessionId); // Log the actual ID
+    // Always use the sessionId from the conversation object if available
+    // This ensures we're using the same ID that ElevenLabs assigned
+    const currentSessionId = conversation?.sessionId || sessionId;
+    console.log("Current conversation sessionId:", conversation?.sessionId);
+    console.log("Current stored sessionId:", sessionId);
     
     const formData = new FormData();
     formData.append('image', selectedImage);
-    formData.append('session_id', sessionId);
+    if (currentSessionId) {
+      console.log("Using sessionId for image upload:", currentSessionId);
+      formData.append('session_id', currentSessionId);
+    } else {
+      console.log("No sessionId available, backend will use pending session");
+    }
 
     try {
-      // Use the upload_image_get_url endpoint instead of analyze-image
-      console.log(`Sending image to backend: ${backendUrl}/upload_image_get_url`);
-      console.log('FormData contents:', {
-        'session_id': sessionId,
-        'image filename': selectedImage.name,
-        'image size': selectedImage.size,
-        'image type': selectedImage.type
-      });
+      // Simple upload endpoint for images
+      console.log(`Sending image to backend: ${backendUrl}/upload_image`);
       
-      const response = await fetch(`${backendUrl}/upload_image_get_url`, {
+      const response = await fetch(`${backendUrl}/upload_image`, {
         method: 'POST',
-        body: formData, // FormData includes the image file and sessionId
+        body: formData
       });
 
       if (!response.ok) {
-        let errorData;
-        try {
-          errorData = await response.json(); // Try to parse JSON error response
-        } catch (parseError) {
-          // If response is not JSON, use text
-          errorData = { error: await response.text() };
-        }
-        console.error("Backend error response:", errorData);
-        throw new Error(`Image upload failed: ${errorData.error || response.statusText}`);
-      }
-
-      // Parse the successful JSON response
-      const result = await response.json();
-      if (!result.public_image_url) {
-         throw new Error("Invalid response format from backend: 'public_image_url' field missing.");
+        throw new Error(`Upload failed: ${response.status}`);
       }
       
-      const imageUrl = result.public_image_url;
-      console.log("Image uploaded successfully. URL:", imageUrl);
+      const data = await response.json();
+      console.log('Upload response:', data);
       
-      // Add a success message to the conversation
+      // Add a message to the conversation about the image
       setMessages(prev => [...prev, {
         type: 'system',
-        text: '✅ Image uploaded successfully!',
+        text: '✅ Image uploaded successfully. You can now ask the AI about this image.',
         timestamp: new Date().toISOString()
       }]);
       
-      // Add instructions for the user
-      setMessages(prev => [...prev, {
-        type: 'system',
-        text: `Now you can ask the voice agent about the image. Try saying "What do you see in this image?" or "Can you describe this image?"`,
-        timestamp: new Date().toISOString()
-      }]);
-
-    } catch (err) {
-      console.error("Image upload failed:", err);
-      setError(`Image upload failed: ${err.message}`);
+      // Clear the selected image from state but keep the UI feedback
+      setSelectedImage(null);
+    } catch (error) {
+      console.error('Error uploading image:', error);
+      setError(`Upload failed: ${error.message}`);
     } finally {
       setIsUploading(false);
-      // Don't clear the image after upload in case user wants to try again
-      // Leave both the selectedImage state and the file input value as is
-      console.log('Upload process completed. Image selection preserved for debugging.');
     }
   };
-
 
   return (
     <div className="App" style={{ maxWidth: '600px', margin: '0 auto', padding: '20px', fontFamily: 'Arial, sans-serif' }}>
@@ -357,101 +332,78 @@ function App() {
           style={{ 
             flex: 1,
             padding: '10px 16px',
-            // Red when disconnected/idle/error (Connect), Green when connected (Disconnect)
             backgroundColor: status === 'connected' ? '#4CAF50' : '#f44336', 
             color: 'white',
             border: 'none',
             borderRadius: '4px',
             cursor: status === 'connecting' ? 'not-allowed' : 'pointer',
-            fontWeight: 'bold'
-          }}
-        >
+            transition: 'background-color 0.3s'
+          }}>
           {status === 'connecting' ? 'Connecting...' :
            status === 'connected' ? 'Disconnect' : 'Connect'}
-        </button>
-        <button onClick={fetchSignedUrl} disabled={status === 'connecting' || status === 'connected'}>
-          Connect to Agent
         </button>
       </div>
 
       {/* Image Upload Section */}
-      {status === 'connected' && (
-        <div style={{
-          border: '1px dashed #ccc',
-          borderRadius: '4px',
-          padding: '15px',
-          marginBottom: '20px',
-          backgroundColor: '#f0f4f8'
-        }}>
-          <h3 style={{ marginTop: 0, marginBottom: '10px' }}>Upload Image for Discussion</h3>
-          <input
-            type="file"
-            id="imageInput"
-            accept="image/*"
-            onChange={handleImageChange}
-            disabled={isUploading}
-            style={{ marginBottom: '10px', display: 'block' }}
-          />
-          <button
-            onClick={handleImageUpload}
-            // Disable if no image OR uploading OR not connected OR sessionId is missing
-            disabled={!selectedImage || isUploading || status !== 'connected' || !sessionId}
-            style={{
-              padding: '10px 16px',
-              // Update style based on the comprehensive disabled state
-              backgroundColor: (!selectedImage || isUploading || status !== 'connected' || !sessionId) ? '#bdbdbd' : '#2196F3',
-              color: 'white',
-              border: 'none',
-              borderRadius: '4px',
-              // Update cursor based on the comprehensive disabled state
-              cursor: (!selectedImage || isUploading || status !== 'connected' || !sessionId) ? 'not-allowed' : 'pointer',
-              fontWeight: 'bold',
-              width: '100%'
-            }}
-          >
-            {isUploading ? 'Uploading Image...' : 'Upload Image'}
-          </button>
-        </div>
-      )}
-      
-      {/* Conversation Area */}
-      <div style={{ 
-        border: '1px solid #ddd', 
+      <div style={{
+        border: '1px dashed #ccc',
         borderRadius: '4px',
         padding: '15px',
         marginBottom: '20px',
-        minHeight: '200px',
-        maxHeight: '400px',
-        overflowY: 'auto',
-        backgroundColor: '#f9f9f9'
+        backgroundColor: '#f0f4f8'
       }}>
-        <h3 style={{ marginTop: 0 }}>Conversation</h3>
+        <h3 style={{ marginTop: 0, marginBottom: '10px' }}>Upload Image for Discussion</h3>
+        <input
+          type="file"
+          id="imageInput"
+          accept="image/*"
+          onChange={handleImageChange}
+          style={{ display: 'block', marginBottom: '10px' }}
+        />
+        <button 
+          onClick={handleImageUpload}
+          disabled={isUploading || !selectedImage}
+          style={{
+            padding: '8px 16px',
+            backgroundColor: '#2196F3',
+            color: 'white',
+            border: 'none',
+            borderRadius: '4px',
+            cursor: (isUploading || !selectedImage) ? 'not-allowed' : 'pointer',
+            width: '100%'
+          }}>
+          {isUploading ? 'Uploading...' : 'Upload Image'}
+        </button>
+      </div>
+      
+      {/* Conversation History */}
+      <div style={{ 
+        border: '1px solid #ddd', 
+        borderRadius: '4px', 
+        height: '300px', 
+        padding: '15px',
+        overflowY: 'auto',
+        backgroundColor: '#fff',
+        marginBottom: '20px'
+      }}>
+        <h3 style={{ margin: '0 0 10px 0' }}>Conversation</h3>
         {messages.length === 0 ? (
-          <p style={{ color: '#888', fontStyle: 'italic' }}>No messages yet</p>
+          <div style={{ color: '#888', fontStyle: 'italic' }}>No messages yet</div>
         ) : (
           <div>
             {messages.map((msg, index) => (
               <div key={index} style={{ 
-                padding: '8px 12px', 
-                marginBottom: '8px',
-                backgroundColor: 
-                  msg.type === 'agent' ? '#e3f2fd' : 
-                  msg.type === 'image_description' ? '#fff3e0' : 
-                  '#f1f8e9',
+                marginBottom: '12px',
+                padding: '8px 12px',
                 borderRadius: '4px',
-                wordBreak: 'break-word', // Ensure long text wraps
-                border: msg.type === 'image_description' ? '2px dashed #ff9800' : 'none'
+                backgroundColor: msg.type === 'user' ? '#e3f2fd' : 
+                                msg.type === 'agent' ? '#f1f8e9' : '#f5f5f5'
               }}>
-                <strong>{
-                  msg.type === 'agent' ? 'Agent:' :
-                  msg.type === 'user' ? 'You:' :
-                  'System:' // Handle system messages
-                }</strong> {msg.text}
-                {msg.timestamp && (
-                  <div style={{ fontSize: '0.7em', color: '#757575', marginTop: '4px' }}>
-                    {new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
-                  </div>
-                )}
+                <div style={{ fontWeight: 'bold', marginBottom: '4px' }}>
+                  {msg.type === 'user' ? 'You' : 
+                   msg.type === 'agent' ? 'AI' : 'System'}:
+                </div>
+                <div>{msg.text}</div>
               </div>
             ))}
           </div>
@@ -461,27 +413,14 @@ function App() {
       {/* Error Display */}
       {error && (
         <div style={{ 
-          color: 'white', 
-          backgroundColor: '#F44336',
-          padding: '10px', 
+          padding: '12px', 
+          backgroundColor: '#ffebee', 
+          color: '#c62828',
+          border: '1px solid #ef9a9a',
           borderRadius: '4px',
           marginBottom: '15px'
         }}>
           <strong>Error:</strong> {error}
-        </div>
-      )}
-      
-      {/* Help Text */}
-      {conversation.status !== 'connected' && (
-        <div style={{ 
-          backgroundColor: '#e8f5e9', 
-          padding: '12px', 
-          borderRadius: '4px',
-          marginTop: '15px'
-        }}>
-          <p style={{ margin: 0 }}>
-            <strong>Getting Started:</strong> Click the Connect button to start a voice conversation.
-          </p>
         </div>
       )}
     </div>

@@ -3,6 +3,7 @@ import json
 import uuid
 import base64 
 import requests 
+from werkzeug.utils import secure_filename
 from flask import Flask, request, jsonify, Response, stream_with_context, send_from_directory, render_template 
 from flask_cors import CORS
 from dotenv import load_dotenv
@@ -161,6 +162,7 @@ def analyze_image():
         }), 500
 
 @app.route('/v1/chat/completions', methods=['POST', 'OPTIONS'])
+@app.route('/v1/chat/completions/chat/completions', methods=['POST', 'OPTIONS'])  # Handle duplicate path pattern from ElevenLabs
 def chat_completions():
     """
     OpenAI-compatible chat completions endpoint for ElevenLabs integration.
@@ -407,10 +409,10 @@ def chat_completions():
                     messages.append(image_message)
                     app.logger.info("Added image to empty messages list")
                 
-                # Remove the image from context AFTER successful injection
-                # Use session_id for lookup
-                image_context.pop(session_id, None)
-                app.logger.info(f"Removed image {image_filename} from context for session {session_id}")
+                # Keep the image in context to allow multiple messages about it
+                # Don't remove it immediately after first use
+                # image_context.pop(session_id, None) 
+                app.logger.info(f"Keeping image {image_filename} in context for session {session_id} for future messages")
             else:
                 app.logger.info(f"No image found for session {session_id}")
         else:
@@ -427,7 +429,7 @@ def chat_completions():
             safe_data['api_key'] = '[REDACTED]'
         print(f"Request data keys: {list(safe_data.keys())}")
         
-        # --- Call LLM Service --- 
+        # --- Call LLM Service (MODIFIED FOR TESTING) --- 
         try:
             # Pass the potentially modified messages list to the LLM service
             llm_response = llm_service.chat_completion(
@@ -440,57 +442,53 @@ def chat_completions():
             
             # Handle streaming response if stream=True
             if stream:
-                # Define a generator function to yield chunks
+                # Define a generator function to yield chunks from real LLM response
                 def generate_chunks():
                     try:
+                        app.logger.info(">>> Starting generate_chunks with LLM response")
                         for chunk in llm_response:
                             # Process the chunk (convert to string, format as SSE, etc.)
                             # Assuming the chunk object has a structure we can serialize
-                            # Check common OpenAI streaming chunk structures
                             content_delta = ""
                             if chunk.choices and chunk.choices[0].delta:
                                 content_delta = chunk.choices[0].delta.content or ""
                             
-                            if content_delta: 
-                                # Format as Server-Sent Event (SSE)
-                                # Example: data: {"id": "...", "choices": [...]} 
-
-                                # Simple approach: just yield the content delta
-                                # yield f"data: {json.dumps({'delta': content_delta})}\n\n"
-                                
-                                # More complete approach: yield OpenAI-like chunk structure
-                                chunk_dict = chunk.model_dump() 
-                                yield f"data: {json.dumps(chunk_dict)}\n\n"
-                                
+                            # More complete approach: yield OpenAI-like chunk structure
+                            chunk_dict = chunk.model_dump() 
+                            sse_data = f"data: {json.dumps(chunk_dict)}\n\n"
+                            yield sse_data
+                            app.logger.info(f"DEBUG: Sent LLM chunk: {sse_data[:100]}...")
+                            
+                        # Send final DONE signal
+                        done_signal = "data: [DONE]\n\n"
+                        yield done_signal
+                        app.logger.info(f"DEBUG: Sent [DONE] signal")
                     except Exception as e:
-                        print(f"Error during streaming: {str(e)}")
+                        app.logger.error(f"Error during streaming: {str(e)}")
                         # Optionally yield an error event
                         yield f"data: {json.dumps({'error': str(e)})}\n\n"
+                        yield "data: [DONE]\n\n" # Still send DONE even after error
+                    finally:
+                        app.logger.info("<<< Exiting generate_chunks")
                 
-                # Return a streaming response with additional headers for CORS
+                # Return a streaming response using the real LLM service now that we've verified connectivity
+                app.logger.info(">>> Using REAL LLM STREAMING response <<<")
                 response = Response(stream_with_context(generate_chunks()), mimetype='text/event-stream')
                 # Add headers that might help with cross-origin streaming
                 response.headers['Cache-Control'] = 'no-cache'
                 response.headers['X-Accel-Buffering'] = 'no'  
                 return response
             else:
-                # Non-streaming: Convert the ChatCompletion object to a dictionary before jsonify
+                # Non-streaming: Use the real LLM response
+                app.logger.info(">>> Returning NON-STREAMING real LLM response <<<")
+                # Convert the ChatCompletion object to a dictionary before jsonify
                 return jsonify(llm_response.model_dump())
         
         except Exception as e:
-            # Catch errors during the LLM API call
-            print(f"Error during LLM API call: {str(e)}")
+            app.logger.error(f"Error during LLM processing or response generation in /v1/chat/completions: {e}")
             import traceback
-            traceback.print_exc()
-            return jsonify({
-                "error": {
-                    "message": f"Error communicating with LLM: {str(e)}",
-                    "type": "llm_error",
-                    "code": 500
-                }
-            }), 500
-        # --- End Call LLM Service ---
-
+            app.logger.error(traceback.format_exc())
+    
     except json.JSONDecodeError:
         print("Error: Invalid JSON in request body")
         return jsonify({
@@ -530,6 +528,57 @@ def chat_completions():
                 "code": 500
             }
         }), 500
+
+# Function to generate a minimal, hardcoded SSE stream for testing
+def generate_minimal_stream():
+    """Generates a minimal, hardcoded SSE stream for testing ElevenLabs."""
+    app.logger.info(">>> Starting generate_minimal_stream")
+    chunk_id = "chatcmpl-debug123"
+    created = int(time.time())
+    model = "debug-model"
+    
+    try:
+        # Chunk 1: Role + Start of content
+        chunk1 = {
+            "id": chunk_id, "object": "chat.completion.chunk", "created": created, "model": model,
+            "choices": [{"delta": {"role": "assistant", "content": "Minimal "}, "index": 0, "finish_reason": None}]
+        }
+        sse_data1 = f"data: {json.dumps(chunk1)}\n\n"
+        yield sse_data1
+        app.logger.info(f"DEBUG: Sent chunk 1: {sse_data1.strip()}")
+        time.sleep(0.5) # Simulate slight delay
+
+        # Chunk 2: More content
+        chunk2 = {
+            "id": chunk_id, "object": "chat.completion.chunk", "created": created, "model": model,
+            "choices": [{"delta": {"content": "test response."}, "index": 0, "finish_reason": None}]
+        }
+        sse_data2 = f"data: {json.dumps(chunk2)}\n\n"
+        yield sse_data2
+        app.logger.info(f"DEBUG: Sent chunk 2: {sse_data2.strip()}")
+        time.sleep(0.5)
+
+        # Chunk 3: Finish reason
+        chunk3 = {
+            "id": chunk_id, "object": "chat.completion.chunk", "created": created, "model": model,
+            "choices": [{"delta": {}, "index": 0, "finish_reason": "stop"}]
+        }
+        sse_data3 = f"data: {json.dumps(chunk3)}\n\n"
+        yield sse_data3
+        app.logger.info(f"DEBUG: Sent finish chunk: {sse_data3.strip()}")
+
+        # DONE Signal
+        done_signal = "data: [DONE]\n\n"
+        yield done_signal
+        app.logger.info(f"DEBUG: Sent [DONE]: {done_signal.strip()}")
+        
+    except Exception as e:
+        app.logger.error(f"Error in generate_minimal_stream: {e}")
+        error_chunk = {"error": {"message": f"Error generating stream: {e}", "type": "server_error"}}
+        yield f"data: {json.dumps(error_chunk)}\n\n"
+        yield "data: [DONE]\n\n" # Still send DONE even after error
+    finally:
+        app.logger.info("<<< Exiting generate_minimal_stream")
 
 @app.route('/upload_image_get_url', methods=['POST'])
 def upload_image_get_url():
@@ -882,23 +931,94 @@ def serve_static(filename):
     os.makedirs(static_folder, exist_ok=True) 
     return send_from_directory(static_folder, filename)
 
+@app.route('/react/')
+@app.route('/react/<path:path>')
+def serve_react(path=''):
+    """Serve the React app at /react/ path."""
+    react_build_folder = os.path.join(os.path.dirname(__file__), 'frontend', 'dist')
+    
+    if path != '' and os.path.exists(os.path.join(react_build_folder, path)):
+        return send_from_directory(react_build_folder, path)
+    else:
+        return send_from_directory(react_build_folder, 'index.html')
+
+@app.route('/assets/<path:filename>')
+def serve_react_assets(filename):
+    """Serve the React app assets."""
+    assets_folder = os.path.join(os.path.dirname(__file__), 'frontend', 'dist', 'assets')
+    return send_from_directory(assets_folder, filename)
+
 @app.route('/v1/test', methods=['GET', 'POST', 'OPTIONS'])
 def test_endpoint():
     """Simple endpoint to test if connections from ElevenLabs are working."""
-    app.logger.info(f"===== TEST ENDPOINT HIT =====")
-    app.logger.info(f"Method: {request.method}")
-    app.logger.info(f"Headers: {dict(request.headers)}")
-    app.logger.info(f"Remote: {request.remote_addr}")
-    
-    # Handle OPTIONS request for CORS preflight
     if request.method == 'OPTIONS':
-        headers = {
-            'Access-Control-Allow-Origin': '*',
-            'Access-Control-Allow-Methods': 'POST, GET, OPTIONS',
-            'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-Api-Key, *',
-            'Access-Control-Max-Age': '3600'
-        }
-        return ('', 204, headers)
+        return handle_preflight()
+    
+    return jsonify({
+        "status": "ok", 
+        "message": "Test endpoint is working!",
+        "timestamp": time.time()
+    })
+    
+@app.route('/upload_image', methods=['POST'])
+def upload_image():
+    """Handle image upload and session linking."""
+    try:
+        app.logger.info(">>> Upload image request received")
+        # Check if image is in the request
+        if 'image' not in request.files:
+            app.logger.warning("No image file in request")
+            return jsonify({"error": "No image file"}), 400
+        
+        image_file = request.files['image']
+        if image_file.filename == '':
+            app.logger.warning("Empty file name")
+            return jsonify({"error": "Empty file name"}), 400
+        
+        # Get session_id if provided
+        session_id = request.form.get('session_id')
+        if not session_id:
+            # If no session ID, use the global pending one or create new
+            global pending_session_id
+            if not pending_session_id:
+                pending_session_id = str(uuid.uuid4())
+            session_id = pending_session_id
+            app.logger.info(f"Using pending session ID: {session_id}")
+        else:
+            app.logger.info(f"Using provided session ID: {session_id}")
+            
+        # Generate safe filename with timestamp to avoid collisions
+        filename = f"{uuid.uuid4()}_{secure_filename(image_file.filename)}"
+        file_path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+        
+        # Create directory if it doesn't exist
+        os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
+        
+        # Save the image
+        image_file.save(file_path)
+        app.logger.info(f"Image saved at: {file_path}")
+        
+        # Store the image filename in our session context dict
+        image_context[session_id] = filename
+        app.logger.info(f"Image {filename} linked to session {session_id}")
+        
+        # Return success with the public image URL
+        base_url = request.host_url.rstrip('/')
+        public_image_url = f"{base_url}/serve_image/{filename}"
+        
+        return jsonify({
+            "status": "success",
+            "message": "Image uploaded successfully",
+            "filename": filename,
+            "session_id": session_id,
+            "public_image_url": public_image_url
+        })
+        
+    except Exception as e:
+        app.logger.error(f"Error uploading image: {str(e)}")
+        import traceback
+        app.logger.error(traceback.format_exc())
+        return jsonify({"error": f"Upload failed: {str(e)}"}), 500
         
     # Return a simple JSON response
     return jsonify({
