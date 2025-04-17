@@ -1,32 +1,44 @@
 import os
 import json
 import uuid
-import base64 # Add base64 for potential image decoding
-import requests # Add requests for making API calls to ElevenLabs
-from flask import Flask, request, jsonify, Response, stream_with_context, send_from_directory, render_template # Add send_from_directory and render_template
+import base64 
+import requests 
+from flask import Flask, request, jsonify, Response, stream_with_context, send_from_directory, render_template 
 from flask_cors import CORS
 from dotenv import load_dotenv
-from llm_factory import create_llm_service # Import the factory
-from llm_service import LLMService # Import base class for type hinting
-import time # Add time import for response formatting
+from llm_factory import create_llm_service 
+from llm_service import LLMService 
+import time 
+import logging
 
 # Load environment variables from .env file
 load_dotenv()
 
+# Debug environment variables
+print(f"\n=== ENVIRONMENT VARIABLES DEBUG ===")
+print(f"ELEVENLABS_API_KEY: {'*' * 20 + os.getenv('ELEVENLABS_API_KEY')[-4:] if os.getenv('ELEVENLABS_API_KEY') else 'Not set'}")
+print(f"ELEVENLABS_AGENT_ID: {os.getenv('ELEVENLABS_AGENT_ID') or 'Not set'}")
+print(f"LLM_PROVIDER: {os.getenv('LLM_PROVIDER') or 'Not set'}")
+print(f"DEFAULT_MODEL: {os.getenv('DEFAULT_MODEL') or 'Not set'}")
+print(f"=== END ENVIRONMENT VARIABLES DEBUG ===\n")
+
 app = Flask(__name__)
 
 # --- Configure CORS --- #
-# Allow requests specifically from the Vite dev server origin
+# Allow requests from the Vite dev server origin to all routes
 # In production, you might want to restrict this to your deployed frontend URL
 # Using a more flexible pattern for local development as Vite port changes
-CORS(app, resources={r"/api/*": {"origins": ["http://localhost:*", "https://localhost:*"]}}) 
+CORS(app, origins=["*"], methods=["GET", "POST", "OPTIONS"], allow_headers=["Content-Type", "Authorization", "X-Api-Key", "*"], expose_headers=["*"])
 # --- End CORS Configuration ---
 
 # --- Image Context Storage --- 
 # Simple in-memory dictionary to store the mapping between a conversation identifier
 # (e.g., user_id from ElevenLabs) and the filename of the image uploaded for that session.
 # This is a basic implementation; a more robust solution (Redis, DB) might be needed for production.
-image_context = {}
+image_context = {} 
+session_map = {}
+pending_session_id = None
+
 # Define required configuration keys
 app.config['UPLOAD_FOLDER'] = os.path.abspath('./uploads')
 
@@ -36,6 +48,10 @@ os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
 
 # Simple in-memory session storage (kept for potential other uses)
 sessions = {}
+
+# Configure logging
+logging.basicConfig(level=logging.INFO) 
+app.logger.setLevel(logging.INFO) 
 
 # Define the root route to serve the test form
 @app.route('/')
@@ -144,24 +160,69 @@ def analyze_image():
             "error": f"Error analyzing image: {str(e)}"
         }), 500
 
-@app.route('/v1/chat/completions', methods=['POST'])
+@app.route('/v1/chat/completions', methods=['POST', 'OPTIONS'])
 def chat_completions():
     """
     OpenAI-compatible chat completions endpoint for ElevenLabs integration.
-    Accepts messages in OpenAI format and returns a compatible response.
-    Handles image data in messages for multimodal analysis.
+    Handles image injection based on session mapping.
     """
+    # --- BEGIN ADDED LOGGING ---
+    app.logger.info(f"====================\n NEW REQUEST at /v1/chat/completions ====================")
+    app.logger.info(f"Timestamp: {time.strftime('%Y-%m-%d %H:%M:%S')}")
+    app.logger.info(f"Remote Address: {request.remote_addr}")
+    app.logger.info(f"Method: {request.method}")
+    app.logger.info(f"URLs: REQUEST_URI={request.environ.get('REQUEST_URI', 'Not in environ')}, PATH_INFO={request.environ.get('PATH_INFO', 'Not in environ')}")
+    app.logger.info(f"Headers:\n{'-'*50}")
+    for name, value in request.headers.items():
+        app.logger.info(f"{name}: {value}")
+    app.logger.info(f"{'-'*50}")
+    
+    try:
+        # Log raw body for debugging non-JSON requests or unexpected formats
+        raw_body = request.get_data()
+        app.logger.info(f"Raw Body (hex): {raw_body[:100].hex()}")
+        try:
+            text_body = request.get_data(as_text=True)
+            app.logger.info(f"Raw Body (text): {text_body[:500]}...")
+        except UnicodeDecodeError:
+            app.logger.info("Raw body is not valid UTF-8 text")
+            
+        # Attempt to log JSON if possible
+        if request.is_json:
+            try:
+                app.logger.info(f"JSON Payload: {request.json}")
+            except Exception as json_err:
+                app.logger.error(f"Error parsing JSON: {json_err}")
+        else:
+            app.logger.info("Request body is not JSON.")
+    except Exception as e:
+        app.logger.error(f"Error inspecting request body: {e}")
+        import traceback
+        app.logger.error(traceback.format_exc())
+    app.logger.info(f"==================== End Request Details ====================")
+    # --- END ADDED LOGGING ---
+
+    # Handle OPTIONS request for CORS preflight
+    if request.method == 'OPTIONS':
+        # You might need to customize these headers based on what ElevenLabs requires
+        headers = {
+            'Access-Control-Allow-Origin': '*', # Or specific origin
+            'Access-Control-Allow-Methods': 'POST, OPTIONS',
+            'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-Api-Key', # Add any other headers ElevenLabs might send
+            'Access-Control-Max-Age': '3600' # Cache preflight response for 1 hour
+        }
+        return ('', 204, headers)
+
+    # Existing logic continues below...
+    app.logger.info("Processing POST request for /v1/chat/completions...")
+
+    # Retrieve the API key from headers or environment variables
+    api_key = request.headers.get('Authorization')
+    
+    global pending_session_id, session_map, image_context 
     # Log request headers and body for debugging
-    print("\n=== INCOMING REQUEST ===\n")
-    print(f"Headers: {dict(request.headers)}")
-    print(f"Request Method: {request.method}")
-    print(f"Content-Type: {request.content_type}")
-    # Don't log the full body as it might contain sensitive data
-    print(f"Request Body Keys: {request.json.keys() if request.is_json else 'Not JSON'}")
-    if request.is_json and 'messages' in request.json:
-        print(f"Message Count: {len(request.json.get('messages', []))}")
-        print(f"Stream Mode: {request.json.get('stream', False)}")
-    print("\n=== END REQUEST INFO ===\n")
+    app.logger.info("\n=== INCOMING /v1/chat/completions REQUEST ===\n")
+    app.logger.info(f"Headers: {dict(request.headers)}")
     try:
         # Validate request has JSON content
         if not request.is_json:
@@ -186,11 +247,11 @@ def chat_completions():
             }), 400
         
         # Extract key parameters
-        model = data.get('model', os.getenv('DEFAULT_MODEL', 'gpt-4o')) # Use env var for default
+        model = data.get('model', os.getenv('DEFAULT_MODEL', 'gpt-4o')) 
         messages = data.get('messages', [])
-        temperature = data.get('temperature') # Pass optional params
+        temperature = data.get('temperature') 
         max_tokens = data.get('max_tokens')
-        stream = data.get('stream', False) # Check if streaming is requested
+        stream = data.get('stream', False) 
         
         # Validate messages format
         if not isinstance(messages, list) or not messages:
@@ -202,13 +263,65 @@ def chat_completions():
                 }
             }), 400
         
+        # --- EXTENSIVE DEBUGGING for ElevenLabs Request ---
+        app.logger.info(f"=== FULL REQUEST DATA IN /v1/chat/completions ===\n{json.dumps(data, indent=2)}")
+        
+        # --- Attempt to get ElevenLabs User ID --- 
+        # IMPORTANT: Requires 'user_id' to be sent by ElevenLabs (enable 'Custom LLM extra body')
+        elevenlabs_user_id = data.get('user_id')
+        
+        # Try alternative user ID fields (could be named differently)
+        possible_user_id_fields = ['user_id', 'userId', 'user', 'id', 'conversation_id', 'conversationId']
+        for field in possible_user_id_fields:
+            if field in data and data[field]:
+                elevenlabs_user_id = data[field]
+                app.logger.info(f"Found user ID in field '{field}': {elevenlabs_user_id}")
+                break
+                
+        app.logger.info(f"Received elevenlabs_user_id: {elevenlabs_user_id}")
+        
+        # --- Dump Current System State for Debugging ---
+        app.logger.info(f"Current pending_session_id: {pending_session_id}")
+        app.logger.info(f"Current session_map: {session_map}")
+        app.logger.info(f"Current image_context: {image_context}")
+        
+        # --- Session Linking Logic --- 
+        session_id = None
+        if elevenlabs_user_id:
+            if elevenlabs_user_id not in session_map:
+                # If this elevenlabs_user_id is new, link it to the pending session_id
+                if pending_session_id:
+                    app.logger.info(f"⭐ Linking new elevenlabs_user_id '{elevenlabs_user_id}' to pending session_id '{pending_session_id}'")
+                    session_map[elevenlabs_user_id] = pending_session_id
+                    session_id = pending_session_id
+                    pending_session_id = None 
+                else:
+                    app.logger.warning(f"⚠️ Received new elevenlabs_user_id '{elevenlabs_user_id}' but no pending_session_id was found.")
+                    # FALLBACK: Check if there's only one session in image_context, use that
+                    if len(image_context) == 1:
+                        only_session_id = list(image_context.keys())[0]
+                        app.logger.info(f"📌 FALLBACK: Only one session found in image_context, using: {only_session_id}")
+                        session_map[elevenlabs_user_id] = only_session_id
+                        session_id = only_session_id
+            else:
+                # Existing elevenlabs_user_id, retrieve the mapped session_id
+                session_id = session_map.get(elevenlabs_user_id)
+                app.logger.info(f"🔄 Found existing mapping: elevenlabs_user_id '{elevenlabs_user_id}' maps to session_id '{session_id}'")
+        else:
+            app.logger.warning("⛔ No elevenlabs_user_id received in the request.")
+            # FALLBACK: If no user_id but we have a pending session and there's only one image, use it
+            if pending_session_id and len(image_context) == 1:
+                app.logger.info(f"📌 FALLBACK: No user_id, but we have pending_session_id: {pending_session_id}")
+                session_id = pending_session_id
+        # --- End Session Linking --- 
+
         # --- LLM Service Integration --- 
         # Get LLM configuration from environment variables
         llm_provider = os.getenv('LLM_PROVIDER', 'openai').lower()
         api_key = os.getenv(f"{llm_provider.upper()}_API_KEY")
 
         if not api_key:
-            print(f"Error: API key for provider '{llm_provider}' not found in environment variables.")
+            app.logger.error(f"Error: API key for provider '{llm_provider}' not found in environment variables.")
             return jsonify({
                 "error": {
                     "message": f"API key for '{llm_provider}' not configured.",
@@ -220,7 +333,7 @@ def chat_completions():
         try:
             llm_service: LLMService = create_llm_service(provider=llm_provider, api_key=api_key)
         except ValueError as e:
-            print(f"Error creating LLM service: {str(e)}")
+            app.logger.error(f"Error creating LLM service: {str(e)}")
             return jsonify({
                 "error": {
                     "message": f"Failed to initialize LLM provider: {str(e)}",
@@ -231,18 +344,26 @@ def chat_completions():
         # --- End LLM Service Integration ---
 
         # --- Image URL Injection Logic --- 
-        # Check if an image is associated with this conversation and inject its URL
-        
-        # Attempt to get a conversation identifier from the request
-        # IMPORTANT: Requires 'user_id' to be sent by ElevenLabs (enable 'Custom LLM extra body')
-        conversation_identifier = data.get('user_id')
+        # Check if an image is associated with this session_id and inject its URL
         
         # Log the conversation identifier for debugging
-        app.logger.info(f"Processing request with conversation_identifier: {conversation_identifier}")
+        app.logger.info(f"📝 Processing request linked to session_id: {session_id}")
         
-        if conversation_identifier:
-            # Check if there's an image associated with this conversation
-            image_filename = image_context.get(conversation_identifier)
+        # FALLBACK: If still no session_id but we have images, use the most recent one
+        if not session_id and image_context:
+            newest_session_id = list(image_context.keys())[-1]  # Last key added
+            app.logger.info(f"🔍 FALLBACK: No session_id match, using newest one: {newest_session_id}")
+            session_id = newest_session_id
+            
+            # Also create a mapping if we have a user_id
+            if elevenlabs_user_id:
+                session_map[elevenlabs_user_id] = session_id
+                app.logger.info(f"🔄 Created FALLBACK mapping for elevenlabs_user_id: {elevenlabs_user_id}")
+        
+        if session_id: 
+            # Check if there's an image associated with this session
+            image_filename = image_context.get(session_id)
+            app.logger.info(f"🖼️ Looking for image with session_id: {session_id}, found: {image_filename}")
             
             if image_filename:
                 # Use the request's host URL instead of relying on environment variable
@@ -250,11 +371,11 @@ def chat_completions():
                 
                 # Construct the full public URL for the image
                 public_image_url = f"{base_url}/serve_image/{image_filename}"
-                app.logger.info(f"Injecting image URL: {public_image_url} for conversation: {conversation_identifier}")
+                app.logger.info(f"Injecting image URL: {public_image_url} for session: {session_id}")
 
                 # Create the OpenAI-compatible message structure for the image
                 image_message = {
-                    "role": "user", # Image is typically associated with the user's turn
+                    "role": "user", 
                     "content": [
                         {
                             "type": "text",
@@ -264,7 +385,7 @@ def chat_completions():
                             "type": "image_url",
                             "image_url": {
                                 "url": public_image_url,
-                                "detail": "auto" # Using auto to let the LLM determine appropriate detail level
+                                "detail": "auto" 
                             }
                         }
                     ]
@@ -287,12 +408,16 @@ def chat_completions():
                     app.logger.info("Added image to empty messages list")
                 
                 # Remove the image from context AFTER successful injection
-                # This prevents the same image from being injected multiple times
-                image_context.pop(conversation_identifier, None)
-                app.logger.info(f"Removed image {image_filename} from context for conversation {conversation_identifier}")
+                # Use session_id for lookup
+                image_context.pop(session_id, None)
+                app.logger.info(f"Removed image {image_filename} from context for session {session_id}")
             else:
-                app.logger.debug(f"No image found for conversation {conversation_identifier}")
-        # --- End Image URL Injection Logic --- 
+                app.logger.info(f"No image found for session {session_id}")
+        else:
+            # Handle case where session linking failed or no elevenlabs_user_id was provided
+            app.logger.warning("Could not determine session_id for image lookup.")
+            
+        # --- End Image URL Injection Logic ---
 
         # Log the request for debugging (moved down slightly)
         print(f"Received request for /v1/chat/completions using {llm_provider} model {model}")
@@ -301,9 +426,7 @@ def chat_completions():
         if 'api_key' in safe_data:
             safe_data['api_key'] = '[REDACTED]'
         print(f"Request data keys: {list(safe_data.keys())}")
-        # Optionally log message content if needed for debugging (beware of large base64 strings)
-        # print(f"Messages: {json.dumps(messages, indent=2)}")
-
+        
         # --- Call LLM Service --- 
         try:
             # Pass the potentially modified messages list to the LLM service
@@ -312,7 +435,7 @@ def chat_completions():
                 model=model,
                 temperature=temperature,
                 max_tokens=max_tokens,
-                stream=stream # Pass stream parameter
+                stream=stream 
             )
             
             # Handle streaming response if stream=True
@@ -328,7 +451,7 @@ def chat_completions():
                             if chunk.choices and chunk.choices[0].delta:
                                 content_delta = chunk.choices[0].delta.content or ""
                             
-                            if content_delta: # Only yield if there's content
+                            if content_delta: 
                                 # Format as Server-Sent Event (SSE)
                                 # Example: data: {"id": "...", "choices": [...]} 
 
@@ -336,7 +459,7 @@ def chat_completions():
                                 # yield f"data: {json.dumps({'delta': content_delta})}\n\n"
                                 
                                 # More complete approach: yield OpenAI-like chunk structure
-                                chunk_dict = chunk.model_dump() # Convert Pydantic model to dict
+                                chunk_dict = chunk.model_dump() 
                                 yield f"data: {json.dumps(chunk_dict)}\n\n"
                                 
                     except Exception as e:
@@ -348,7 +471,7 @@ def chat_completions():
                 response = Response(stream_with_context(generate_chunks()), mimetype='text/event-stream')
                 # Add headers that might help with cross-origin streaming
                 response.headers['Cache-Control'] = 'no-cache'
-                response.headers['X-Accel-Buffering'] = 'no'  # Helps with nginx proxy buffering
+                response.headers['X-Accel-Buffering'] = 'no'  
                 return response
             else:
                 # Non-streaming: Convert the ChatCompletion object to a dictionary before jsonify
@@ -399,7 +522,7 @@ def chat_completions():
         print(f"Error in chat_completions: {str(e)}")
         # Log the full exception traceback for debugging
         import traceback
-        traceback.print_exc() # Log full traceback for unexpected errors
+        traceback.print_exc() 
         return jsonify({
             "error": {
                 "message": f"Internal server error: {str(e)}",
@@ -408,37 +531,35 @@ def chat_completions():
             }
         }), 500
 
-# --- Supporting Endpoints for Image Handling (To Be Implemented per INTEGRATION_PLAN.md) ---
-
 @app.route('/upload_image_get_url', methods=['POST'])
 def upload_image_get_url():
-    """Receive an image file and a conversation_id, save the image, and return a public URL.
-    Following INTEGRATION_PLAN.md, this endpoint:
-    1. Receives the image file and conversation_id
+    """Receive an image file and a session_id, save the image, and return a public URL.
+    This endpoint:
+    1. Receives the image file and session_id
     2. Validates the file
     3. Saves it with a unique filename
-    4. Stores the mapping in image_context
+    4. Stores the mapping in image_context using session_id
     5. Returns the public URL
     """
+    global image_context 
     try:
         # Validate request contains necessary data
         if 'image' not in request.files:
+            app.logger.error("Upload error: No image file provided")
             return jsonify({"error": "No image file provided"}), 400
         
         # Get the image file
         image_file = request.files['image']
         if image_file.filename == '':
+            app.logger.error("Upload error: Empty filename")
             return jsonify({"error": "Empty filename"}), 400
             
-        # Get conversation_id from form or JSON
-        conversation_id = None
-        if request.form and 'conversation_id' in request.form:
-            conversation_id = request.form['conversation_id']
-        elif request.is_json and 'conversation_id' in request.json:
-            conversation_id = request.json['conversation_id']
+        # Get session_id from form data (ensure frontend sends 'session_id')
+        session_id = request.form.get('session_id')
             
-        if not conversation_id:
-            return jsonify({"error": "No conversation_id provided"}), 400
+        if not session_id:
+            app.logger.error("Upload error: No session_id provided")
+            return jsonify({"error": "No session_id provided"}), 400
         
         # Generate a unique filename (to prevent overwrites/collisions)
         file_extension = os.path.splitext(image_file.filename)[1].lower()
@@ -448,9 +569,9 @@ def upload_image_get_url():
         # Save the image file
         image_file.save(file_path)
         
-        # Store mapping in image_context
-        image_context[conversation_id] = unique_filename
-        app.logger.info(f"Saved image for conversation {conversation_id}: {unique_filename}")
+        # Store mapping in image_context using session_id
+        image_context[session_id] = unique_filename
+        app.logger.info(f"Saved image for session {session_id}: {unique_filename}")
         
         # Construct public URL for the image 
         # Use request.host_url to get the base URL dynamically
@@ -461,7 +582,7 @@ def upload_image_get_url():
             "status": "success",
             "message": "Image uploaded successfully",
             "public_image_url": public_image_url,
-            "conversation_id": conversation_id
+            "session_id": session_id 
         })
     except Exception as e:
         app.logger.error(f"Error in upload_image_get_url: {str(e)}")
@@ -487,71 +608,70 @@ def serve_image(filename):
         app.logger.error(f"Error serving image {filename}: {str(e)}")
         return jsonify({"error": f"Server error: {str(e)}"}), 500
 
-# --- End Supporting Endpoints ---
-
-
-# Add a route for '/chat/completions' to handle ElevenLabs requests without the v1 prefix
-@app.route('/chat/completions', methods=['POST'])
-def chat_completions_no_v1():
-    """Alias for the /v1/chat/completions endpoint to handle ElevenLabs requests."""
-    print("Received request for /chat/completions - forwarding to /v1/chat/completions handler")
-    return chat_completions()
-
-# --- ElevenLabs Integration Endpoints ---
-
 @app.route('/api/elevenlabs/get-signed-url', methods=['GET'])
 def get_elevenlabs_signed_url():
-    """Generate a temporary signed URL for the ElevenLabs Conversational WebSocket.
+    """Generate a temporary signed URL and a unique session ID.
 
-    This endpoint securely uses the backend API key to request a signed URL
-    from ElevenLabs, which the frontend can then use to connect without
-    exposing the secret key.
+    1. Calls ElevenLabs API to get a signed URL.
+    2. Generates a unique session ID (UUID).
+    3. Stores the session ID temporarily as pending.
+    4. Returns both the signed URL and the session ID to the frontend.
     """
-    load_dotenv() # Ensure environment variables are loaded
+    global pending_session_id 
+    load_dotenv() 
     api_key = os.getenv('ELEVENLABS_API_KEY')
-    print(f"[ElevenLabs URL Gen] Retrieved API Key: {'********' + api_key[-4:] if api_key else 'Not Found'}")
-    agent_id = os.getenv('ELEVENLABS_AGENT_ID')
-    print(f"[ElevenLabs URL Gen] Retrieved Agent ID: {agent_id}")
+    app.logger.info(f"[ElevenLabs URL Gen] Retrieved API Key: {'********' + api_key[-4:] if api_key else 'Not Found'}")
+    # Force using the correct agent ID from .env - this overrides any cached value
+    agent_id = "al0xrBMlL3qchebAFV9N"  # Directly use the correct agent ID
+    app.logger.info(f"[ElevenLabs URL Gen] Using Agent ID: {agent_id}")
 
     if not api_key or not agent_id:
-        print("[ElevenLabs URL Gen] Error: API Key or Agent ID missing in environment.")
+        app.logger.error("[ElevenLabs URL Gen] Error: API Key or Agent ID missing.")
         return jsonify({"error": "Server configuration error: Missing ElevenLabs credentials."}), 500
 
-    elevenlabs_url = f"https://api.elevenlabs.io/v1/convai/conversation/get_signed_url?agent_id={agent_id}"
+    elevenlabs_api_endpoint = f"https://api.elevenlabs.io/v1/convai/conversation/get_signed_url?agent_id={agent_id}"
     headers = {
         "xi-api-key": api_key
     }
 
     try:
-        response = requests.get(elevenlabs_url, headers=headers)
-        response.raise_for_status()  # Raise an HTTPError for bad responses (4xx or 5xx)
-
-        data = response.json()
-        signed_url = data.get('signed_url')
+        # Use GET method as per the ElevenLabs documentation
+        response = requests.get(elevenlabs_api_endpoint, headers=headers)
+        response.raise_for_status()  # Raise HTTPError for bad responses (4xx or 5xx)
+        
+        signed_url_data = response.json()
+        # Log the full response to see its structure
+        app.logger.info(f"[ElevenLabs URL Gen] Response received: {signed_url_data}")
+        
+        # Check for common field names in the response
+        signed_url = None
+        for field in ['url', 'signed_url', 'signedUrl']:
+            if field in signed_url_data:
+                signed_url = signed_url_data.get(field)
+                app.logger.info(f"[ElevenLabs URL Gen] Found URL in field: {field}")
+                break
 
         if not signed_url:
-            print(f"[ElevenLabs URL Gen] Error: 'signed_url' key not found in response: {data}")
-            return jsonify({"error": "Failed to retrieve signed URL from ElevenLabs."}), 502 # Bad Gateway
+            app.logger.error("[ElevenLabs URL Gen] Error: 'url' not found in ElevenLabs response.")
+            return jsonify({"error": "Failed to get signed URL from ElevenLabs."}), 500
+            
+        # Generate a unique session ID
+        session_id = str(uuid.uuid4())
+        pending_session_id = session_id 
+        app.logger.info(f"[ElevenLabs URL Gen] Generated Session ID: {session_id}")
 
-        # Return both the signed URL and the agent ID used to generate it
-        return jsonify({"signedUrl": signed_url, "agentId": agent_id})
+        return jsonify({
+            "signedUrl": signed_url, 
+            "sessionId": session_id, 
+            "agentId": agent_id 
+        })
 
     except requests.exceptions.RequestException as e:
-        print(f"[ElevenLabs URL Gen] Error contacting ElevenLabs API: {e}")
-        # Check if response exists to provide more detail
-        error_detail = str(e)
-        if e.response is not None:
-            try:
-                error_detail = e.response.json() or e.response.text
-            except json.JSONDecodeError:
-                error_detail = e.response.text
-        return jsonify({"error": "Failed to communicate with ElevenLabs API.", "details": error_detail}), 502 # Bad Gateway
+        app.logger.error(f"[ElevenLabs URL Gen] HTTP Request failed: {str(e)}")
+        return jsonify({"error": f"Failed to communicate with ElevenLabs API: {str(e)}"}), 502
     except Exception as e:
-        print(f"[ElevenLabs URL Gen] Unexpected error generating signed URL: {e}")
-        import traceback
-        traceback.print_exc() # Log full traceback for unexpected errors
-        return jsonify({"error": "An unexpected server error occurred."}), 500
-
+        app.logger.error(f"[ElevenLabs URL Gen] Unexpected error: {str(e)}")
+        return jsonify({"error": f"An unexpected error occurred: {str(e)}"}), 500
 
 @app.route('/elevenlabs/tts', methods=['POST'])
 def send_to_elevenlabs_tts(text):
@@ -568,11 +688,11 @@ def send_to_elevenlabs_tts(text):
         # Get ElevenLabs API key from environment variables
         api_key = os.getenv('ELEVENLABS_API_KEY')
         if not api_key:
-            print("Error: ELEVENLABS_API_KEY not found in environment variables")
+            app.logger.error("Error: ELEVENLABS_API_KEY not found in environment variables")
             return None
             
         # Check if we have an agent ID
-        agent_id = os.getenv('ELEVENLABS_AGENT_ID', 'r7QeXEUadxgIchsAQYax')  # Use the provided agent ID
+        agent_id = os.getenv('ELEVENLABS_AGENT_ID', 'r7QeXEUadxgIchsAQYax')  
         
         if agent_id:
             # Send to ElevenLabs agent
@@ -582,7 +702,7 @@ def send_to_elevenlabs_tts(text):
             return generate_elevenlabs_audio(text, api_key)
             
     except Exception as e:
-        print(f"Error sending to ElevenLabs: {str(e)}")
+        app.logger.error(f"Error sending to ElevenLabs: {str(e)}")
         import traceback
         traceback.print_exc()
         return {
@@ -638,14 +758,14 @@ def send_to_elevenlabs_agent(text, agent_id, api_key):
                 "message": "Message sent to ElevenLabs agent successfully"
             }
         else:
-            print(f"Error from ElevenLabs Agent API: {response.status_code} - {response.text}")
+            app.logger.error(f"Error from ElevenLabs Agent API: {response.status_code} - {response.text}")
             return {
                 "status": "error",
                 "message": f"ElevenLabs Agent API error: {response.status_code}",
                 "details": response.text
             }
     except Exception as e:
-        print(f"Error sending to ElevenLabs agent: {str(e)}")
+        app.logger.error(f"Error sending to ElevenLabs agent: {str(e)}")
         import traceback
         traceback.print_exc()
         return {
@@ -666,7 +786,7 @@ def generate_elevenlabs_audio(text, api_key):
     """
     try:
         # Get voice ID from environment variables or use default
-        voice_id = os.getenv('ELEVENLABS_VOICE_ID', 'pNInz6obpgDQGcFmaJgB')  # Default to Adam voice
+        voice_id = os.getenv('ELEVENLABS_VOICE_ID', 'pNInz6obpgDQGcFmaJgB')  
         
         if voice_id:
             # Send to ElevenLabs agent
@@ -679,7 +799,7 @@ def generate_elevenlabs_audio(text, api_key):
             }
             
     except Exception as e:
-        print(f"Error generating ElevenLabs audio: {str(e)}")
+        app.logger.error(f"Error generating ElevenLabs audio: {str(e)}")
         import traceback
         traceback.print_exc()
         return {
@@ -741,14 +861,14 @@ def generate_elevenlabs_audio_with_voice(text, voice_id, api_key):
                 "audio_url": f"/static/{filename}"
             }
         else:
-            print(f"Error from ElevenLabs TTS API: {response.status_code} - {response.text}")
+            app.logger.error(f"Error from ElevenLabs TTS API: {response.status_code} - {response.text}")
             return {
                 "status": "error",
                 "message": f"ElevenLabs TTS API error: {response.status_code}",
                 "details": response.text
             }
     except Exception as e:
-        print(f"Error generating ElevenLabs audio: {str(e)}")
+        app.logger.error(f"Error generating ElevenLabs audio: {str(e)}")
         import traceback
         traceback.print_exc()
         return {
@@ -756,16 +876,87 @@ def generate_elevenlabs_audio_with_voice(text, voice_id, api_key):
             "message": f"Error: {str(e)}"
         }
 
-# Add a route to serve static files
 @app.route('/static/<path:filename>')
 def serve_static(filename):
     static_folder = os.path.join(os.path.dirname(__file__), 'static')
-    os.makedirs(static_folder, exist_ok=True) # Ensure static exists
+    os.makedirs(static_folder, exist_ok=True) 
     return send_from_directory(static_folder, filename)
+
+@app.route('/v1/test', methods=['GET', 'POST', 'OPTIONS'])
+def test_endpoint():
+    """Simple endpoint to test if connections from ElevenLabs are working."""
+    app.logger.info(f"===== TEST ENDPOINT HIT =====")
+    app.logger.info(f"Method: {request.method}")
+    app.logger.info(f"Headers: {dict(request.headers)}")
+    app.logger.info(f"Remote: {request.remote_addr}")
+    
+    # Handle OPTIONS request for CORS preflight
+    if request.method == 'OPTIONS':
+        headers = {
+            'Access-Control-Allow-Origin': '*',
+            'Access-Control-Allow-Methods': 'POST, GET, OPTIONS',
+            'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-Api-Key, *',
+            'Access-Control-Max-Age': '3600'
+        }
+        return ('', 204, headers)
+        
+    # Return a simple JSON response
+    return jsonify({
+        "status": "success", 
+        "message": "Connection to custom LLM endpoint successful!",
+        "timestamp": time.strftime('%Y-%m-%d %H:%M:%S')
+    })
+
+@app.route('/v1/test/chat/completions', methods=['POST', 'OPTIONS'])
+def test_chat_completions():
+    """Handle the chat/completions requests that ElevenLabs appends to our test endpoint."""
+    app.logger.info(f"===== TEST CHAT COMPLETIONS ENDPOINT HIT =====")
+    app.logger.info(f"Method: {request.method}")
+    app.logger.info(f"Headers: {dict(request.headers)}")
+    
+    # Handle OPTIONS request for CORS preflight
+    if request.method == 'OPTIONS':
+        headers = {
+            'Access-Control-Allow-Origin': '*',
+            'Access-Control-Allow-Methods': 'POST, OPTIONS',
+            'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-Api-Key, *',
+            'Access-Control-Max-Age': '3600'
+        }
+        return ('', 204, headers)
+    
+    # Log the request body
+    try:
+        if request.is_json:
+            app.logger.info(f"Request JSON: {request.json}")
+    except Exception as e:
+        app.logger.error(f"Error parsing request JSON: {e}")
+    
+    # Return a simple OpenAI-compatible response
+    return jsonify({
+        "id": f"test-{uuid.uuid4()}",
+        "object": "chat.completion",
+        "created": int(time.time()),
+        "model": "test-model",
+        "choices": [
+            {
+                "index": 0,
+                "message": {
+                    "role": "assistant",
+                    "content": "Hello! This is a test response from your custom LLM endpoint. The connection is working correctly!"
+                },
+                "finish_reason": "stop"
+            }
+        ],
+        "usage": {
+            "prompt_tokens": 0,
+            "completion_tokens": 0,
+            "total_tokens": 0
+        }
+    })
 
 if __name__ == '__main__':
     # Ensure environment variables are loaded once at startup
     load_dotenv()
     # Run the app
     # Use host='0.0.0.0' to make it accessible on the network if needed
-    app.run(debug=True, port=5003) # Change port here
+    app.run(debug=True, port=5003) 
