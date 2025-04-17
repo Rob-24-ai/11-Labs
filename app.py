@@ -11,6 +11,8 @@ from llm_factory import create_llm_service
 from llm_service import LLMService 
 import time 
 import logging
+# Import central LLM configuration
+from llm_config import LLM_PROVIDER, DEFAULT_MODEL
 
 # Load environment variables from .env file
 load_dotenv()
@@ -20,7 +22,8 @@ print(f"\n=== ENVIRONMENT VARIABLES DEBUG ===")
 print(f"ELEVENLABS_API_KEY: {'*' * 20 + os.getenv('ELEVENLABS_API_KEY')[-4:] if os.getenv('ELEVENLABS_API_KEY') else 'Not set'}")
 print(f"ELEVENLABS_AGENT_ID: {os.getenv('ELEVENLABS_AGENT_ID') or 'Not set'}")
 print(f"LLM_PROVIDER: {os.getenv('LLM_PROVIDER') or 'Not set'}")
-print(f"DEFAULT_MODEL: {os.getenv('DEFAULT_MODEL') or 'Not set'}")
+print(f"LLM Provider: {LLM_PROVIDER}")
+print(f"Default Model: {DEFAULT_MODEL}")
 print(f"=== END ENVIRONMENT VARIABLES DEBUG ===\n")
 
 app = Flask(__name__)
@@ -369,7 +372,7 @@ def analyze_image():
         # Call LLM for analysis
         response = llm_service.chat_completion(
             messages=messages,
-            model=os.getenv('DEFAULT_MODEL', 'gpt-4o')
+            model=DEFAULT_MODEL
         )
         
         # Extract the analysis text
@@ -491,7 +494,7 @@ def chat_completions():
             }), 400
         
         # Extract key parameters
-        model = data.get('model', os.getenv('DEFAULT_MODEL', 'gpt-4o')) 
+        model = data.get('model', DEFAULT_MODEL)
         messages = data.get('messages', [])
         temperature = data.get('temperature') 
         max_tokens = data.get('max_tokens')
