@@ -3,8 +3,21 @@ import { useConversation } from '@11labs/react';
 import './App.css';
 
 function App() {
-  // Basic state
-  const [messages, setMessages] = useState([]);
+  // Initialize state with a system message to ensure display is working
+  const [messages, setMessages] = useState([{
+    type: 'system',
+    text: 'Conversation started. Messages will appear here.',
+    timestamp: new Date().toISOString()
+  }]);
+  
+  // Add messages to conversation UI
+  const addMessageToUI = (text, type) => {
+    setMessages(prev => [...prev, {
+      text,
+      type,
+      timestamp: new Date().toISOString()
+    }]);
+  };
   const [status, setStatus] = useState('disconnected');
   const [error, setError] = useState(null);
   const [selectedImage, setSelectedImage] = useState(null); // State for selected image file
@@ -39,37 +52,53 @@ function App() {
     },
     
     onMessage: (message) => {
-      console.log('Received message:', message);
+      console.log('Received message:', JSON.stringify(message, null, 2));
       if (!isMounted.current) return;
       
-      // Handle user speech transcripts
-      if (message?.type === 'user_transcript' && message.user_transcription_event?.is_final) {
-        const transcript = message.user_transcription_event.user_transcript;
-        console.log('User said:', transcript);
+      // MESSAGE HANDLER: Only show AI messages in conversation
+      
+      // 1. Skip user transcripts completely
+      if (message?.type === 'user_transcript') {
+        return;
+      }
+      
+      // 2. Handle messages with the source property
+      if (message?.message) {
+        if (message.source === 'ai') {
+          // AI message - display it
+          addMessageToUI(message.message, 'agent');
+          return;
+        } 
+        else if (message.source === 'user') {
+          // User message - skip it
+          return;
+        }
+      }
+      
+      // 3. Handle agent_response type messages (always from AI)
+      if (message?.type === 'agent_response') {
+        const text = message.message || message.agent_response_event?.text || '';
+        if (text) {
+          addMessageToUI(text, 'agent');
+          return;
+        }
+      }
+      
+      // 4. Handle received_message objects
+      if (message?.received_message) {
+        let text = '';
+        let source = null;
         
-        setMessages(prev => [...prev, { 
-          type: 'user', 
-          text: transcript,
-          timestamp: new Date().toISOString()
-        }]);
-      } 
-      // Handle agent responses
-      else if (message?.type === 'agent_response') {
-        let messageText = '';
-        
-        if (message.message) {
-          messageText = message.message;
-        } else if (message.agent_response_event?.text) {
-          messageText = message.agent_response_event.text;
+        if (typeof message.received_message === 'object') {
+          text = message.received_message.message || '';
+          source = message.received_message.source;
+        } else if (typeof message.received_message === 'string') {
+          text = message.received_message;
         }
         
-        if (messageText) {
-          console.log('Agent said:', messageText);
-          setMessages(prev => [...prev, { 
-            type: 'agent', 
-            text: messageText,
-            timestamp: new Date().toISOString()
-          }]);
+        // Only show AI messages
+        if (text && source === 'ai') {
+          addMessageToUI(text, 'agent');
         }
       }
     },
@@ -138,6 +167,30 @@ function App() {
       console.log('Stopping conversation...');
       await conversation.endSession();
       console.log('Conversation stopped successfully');
+      
+      // Call the session end API to clean up resources
+      if (sessionId) {
+        console.log(`Triggering cleanup for session: ${sessionId}`);
+        try {
+          const response = await fetch(`${backendUrl}/api/session/end`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ session_id: sessionId })
+          });
+          
+          if (response.ok) {
+            const data = await response.json();
+            console.log('Session cleanup successful:', data);
+          } else {
+            console.warn('Session cleanup returned error status:', response.status);
+          }
+        } catch (cleanupError) {
+          // Log but don't block on cleanup errors
+          console.error('Error during session cleanup:', cleanupError);
+        }
+      }
     } catch (error) {
       console.error('Error stopping conversation:', error);
       setError(`Error stopping conversation: ${error.message}`);
@@ -243,23 +296,21 @@ function App() {
     const currentSessionId = conversation?.sessionId || sessionId;
     console.log("Current conversation sessionId:", conversation?.sessionId);
     console.log("Current stored sessionId:", sessionId);
-    
     const formData = new FormData();
     formData.append('image', selectedImage);
-    if (currentSessionId) {
-      console.log("Using sessionId for image upload:", currentSessionId);
-      formData.append('session_id', currentSessionId);
-    } else {
-      console.log("No sessionId available, backend will use pending session");
+    
+    // Store the current session_id if we have one
+    if (sessionId) {
+      formData.append('session_id', sessionId);
     }
 
+    setIsUploading(true);
+    setUploadError(null);
+    
     try {
-      // Simple upload endpoint for images
-      console.log(`Sending image to backend: ${backendUrl}/upload_image`);
-      
-      const response = await fetch(`${backendUrl}/upload_image`, {
+      const response = await fetch('/upload_image', {
         method: 'POST',
-        body: formData
+        body: formData,
       });
 
       if (!response.ok) {
@@ -278,9 +329,10 @@ function App() {
       
       // Clear the selected image from state but keep the UI feedback
       setSelectedImage(null);
+      return data; // Return data for potential chaining
     } catch (error) {
-      console.error('Error uploading image:', error);
-      setError(`Upload failed: ${error.message}`);
+      setUploadError(error.message);
+      return null; // Return null to indicate failure
     } finally {
       setIsUploading(false);
     }
@@ -387,27 +439,28 @@ function App() {
         marginBottom: '20px'
       }}>
         <h3 style={{ margin: '0 0 10px 0' }}>Conversation</h3>
-        {messages.length === 0 ? (
-          <div style={{ color: '#888', fontStyle: 'italic' }}>No messages yet</div>
-        ) : (
-          <div>
-            {messages.map((msg, index) => (
-              <div key={index} style={{ 
-                marginBottom: '12px',
-                padding: '8px 12px',
-                borderRadius: '4px',
-                backgroundColor: msg.type === 'user' ? '#e3f2fd' : 
-                                msg.type === 'agent' ? '#f1f8e9' : '#f5f5f5'
-              }}>
-                <div style={{ fontWeight: 'bold', marginBottom: '4px' }}>
-                  {msg.type === 'user' ? 'You' : 
-                   msg.type === 'agent' ? 'AI' : 'System'}:
-                </div>
-                <div>{msg.text}</div>
+        {/* Debug info to help troubleshoot */}
+        <div style={{ fontSize: '12px', color: '#666', marginBottom: '10px' }}>
+          Message count: {messages.length}
+        </div>
+        
+        <div>
+          {messages
+            .filter(msg => msg.type === 'agent' || msg.type === 'system') // Only show AI and system messages
+            .map((msg, index) => (
+            <div key={index} style={{ 
+              marginBottom: '12px',
+              padding: '8px 12px',
+              borderRadius: '4px',
+              backgroundColor: msg.type === 'agent' ? '#f1f8e9' : '#f5f5f5'
+            }}>
+              <div style={{ fontWeight: 'bold', marginBottom: '4px' }}>
+                {msg.type === 'agent' ? 'AI' : 'System'}:
               </div>
-            ))}
-          </div>
-        )}
+              <div>{msg.text}</div>
+            </div>
+          ))}
+        </div>
       </div>
       
       {/* Error Display */}

@@ -49,6 +49,8 @@ The plan below details the steps to build this standalone Image Reader Module AP
     *   [ ] Filename Sanitization (UUID) - *Less critical with direct processing*
     *   [ ] URL Validation (Basic SSRF checks) - *Basic checks in place*
     *   [X] Prompt Management (Accept custom `prompt`, provide default) - *Handled via messages*
+    *   [X] Session-scoped Image Context Management - *Images properly tied to sessions*
+    *   [X] Full Resource Cleanup - *Complete state reset and image removal implemented*
 
 *   **Phase 1.5: Custom LLM Endpoint for ElevenLabs**
     *   [X] Implement `/v1/chat/completions` endpoint (OpenAI format)

@@ -45,6 +45,85 @@ app.config['UPLOAD_FOLDER'] = os.path.abspath('./uploads')
 
 # Ensure the upload folder exists
 os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
+
+# Cleanup function for uploaded images
+def cleanup_session_images(session_id=None):
+    """Remove image files when a session ends or during maintenance.
+    
+    Args:
+        session_id: Optional specific session ID to clean up. If None, clean all ended sessions.
+    
+    Returns:
+        dict: Summary of cleanup operations
+    """
+    app.logger.info(f"🧹 Running image cleanup for session_id: {session_id if session_id else 'ALL'}")    
+    
+    images_removed = 0
+    files_not_found = 0
+    errors = []
+    
+    try:
+        # If specific session_id provided, clean only that session
+        if session_id:
+            filename = image_context.pop(session_id, None)
+            if filename:
+                file_path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+                if os.path.exists(file_path):
+                    os.remove(file_path)
+                    app.logger.info(f"✅ Removed image file: {filename} for session: {session_id}")
+                    images_removed += 1
+                else:
+                    app.logger.warning(f"⚠️ Image file not found: {filename} for session: {session_id}")
+                    files_not_found += 1
+                
+                # Clean up the session mapping if it exists
+                for user_id, sess_id in list(session_map.items()):
+                    if sess_id == session_id:
+                        session_map.pop(user_id)
+                        app.logger.info(f"✅ Removed session mapping for user: {user_id}")
+            else:
+                app.logger.info(f"No image found for session: {session_id}")
+        else:
+            # Cleanup orphaned files older than 2 hours
+            current_time = time.time()
+            two_hours_ago = current_time - (2 * 60 * 60)  # 2 hours in seconds
+            
+            # Get all files in the uploads directory
+            for filename in os.listdir(app.config['UPLOAD_FOLDER']):
+                file_path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+                
+                # Skip directories and only process files
+                if not os.path.isfile(file_path):
+                    continue
+                    
+                # Check if file is older than 2 hours
+                file_mod_time = os.path.getmtime(file_path)
+                if file_mod_time < two_hours_ago:
+                    # Check if file is still referenced in image_context
+                    if filename not in image_context.values():
+                        try:
+                            os.remove(file_path)
+                            app.logger.info(f"✅ Removed orphaned image file: {filename}")
+                            images_removed += 1
+                        except Exception as e:
+                            error_msg = f"Error removing {filename}: {str(e)}"
+                            app.logger.error(error_msg)
+                            errors.append(error_msg)
+    except Exception as e:
+        error_msg = f"Error during cleanup: {str(e)}"
+        app.logger.error(error_msg)
+        errors.append(error_msg)
+    
+    cleanup_summary = {
+        "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
+        "session_id": session_id,
+        "images_removed": images_removed,
+        "files_not_found": files_not_found,
+        "errors": errors
+    }
+    
+    app.logger.info(f"🧹 Cleanup complete: {cleanup_summary}")
+    return cleanup_summary
 # --- End Image Context Storage ---
 
 # Simple in-memory session storage (kept for potential other uses)
@@ -54,11 +133,174 @@ sessions = {}
 logging.basicConfig(level=logging.INFO) 
 app.logger.setLevel(logging.INFO) 
 
+# Force complete reset of all state on server startup
+app.logger.info("🧹 PERFORMING COMPLETE RESET OF ALL SESSION STATE ON SERVER START")
+
+# 1. Clear all in-memory state
+image_context.clear()
+session_map.clear()
+pending_session_id = None
+app.logger.info("✅ Cleared all in-memory session state")
+
+# 2. Delete all uploaded images
+try:
+    cleanup_count = 0
+    for filename in os.listdir(app.config['UPLOAD_FOLDER']):
+        file_path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+        if os.path.isfile(file_path):
+            os.remove(file_path)
+            cleanup_count += 1
+    app.logger.info(f"✅ Removed {cleanup_count} image files from uploads folder")
+except Exception as e:
+    app.logger.error(f"Error cleaning uploads folder: {e}")
+
+app.logger.info("Image cleanup functionality available via /cleanup_images endpoint")
+app.logger.info("Automatic cleanup happens when sessions end or via manual trigger")
+
 # Define the root route to serve the test form
 @app.route('/')
 def index():
     """Serve the main voice interaction interface."""
     return render_template('voice_interface.html')
+
+# Cleanup endpoint for manual testing and maintenance
+@app.route('/cleanup_images', methods=['GET', 'POST'])
+def cleanup_images_endpoint():
+    """Endpoint to manually trigger image cleanup.
+    
+    GET: Returns a simple HTML form to trigger cleanup
+    POST: Performs the actual cleanup operation
+    
+    Query parameters:
+        session_id: Optional specific session to clean up
+        api_key: Simple authentication (should be enhanced for production)
+    """
+    # Simple authentication check - should be enhanced for production
+    provided_key = request.args.get('api_key') or request.form.get('api_key')
+    expected_key = os.getenv('CLEANUP_API_KEY', 'test_cleanup_key')
+    
+    if provided_key != expected_key:
+        return jsonify({"error": "Invalid API key"}), 401
+    
+    # GET request returns a simple form for manual testing
+    if request.method == 'GET':
+        html = """
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <title>Image Cleanup Tool</title>
+            <style>
+                body { font-family: Arial, sans-serif; max-width: 800px; margin: 0 auto; padding: 20px; }
+                .container { border: 1px solid #ccc; padding: 20px; border-radius: 5px; }
+                .btn { background: #4CAF50; color: white; border: none; padding: 10px 15px; border-radius: 4px; cursor: pointer; }
+                .btn:hover { background: #45a049; }
+                .form-group { margin-bottom: 15px; }
+                label { display: block; margin-bottom: 5px; }
+                input[type="text"] { padding: 8px; width: 100%; box-sizing: border-box; }
+            </style>
+        </head>
+        <body>
+            <div class="container">
+                <h1>Image Cleanup Tool</h1>
+                
+                <form action="/cleanup_images" method="post">
+                    <div class="form-group">
+                        <label for="api_key">API Key:</label>
+                        <input type="text" id="api_key" name="api_key" value="test_cleanup_key" required>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="session_id">Session ID (leave blank for all):</label>
+                        <input type="text" id="session_id" name="session_id" placeholder="Optional specific session ID">
+                    </div>
+                    
+                    <button type="submit" class="btn">Run Cleanup</button>
+                </form>
+                
+                <h2>Current Sessions & Images</h2>
+                <pre id="debug_info" style="background: #f5f5f5; padding: 10px; overflow: auto;">
+                Image Context: %s
+                Session Map: %s
+                Pending Session ID: %s
+                </pre>
+            </div>
+        </body>
+        </html>
+        """ % (json.dumps(image_context, indent=2), json.dumps(session_map, indent=2), pending_session_id)
+        
+        return html
+    
+    # POST request performs the actual cleanup
+    session_id = request.form.get('session_id') or request.args.get('session_id')
+    
+    # Run cleanup function
+    result = cleanup_session_images(session_id)
+    
+    # Return results as JSON
+    return jsonify({
+        "status": "success",
+        "cleanup_results": result,
+        "current_state": {
+            "image_context": image_context,
+            "session_map": session_map,
+            "pending_session_id": pending_session_id
+        }
+    })
+
+# Session end endpoint - can be called when a voice session disconnects
+@app.route('/api/session/end', methods=['POST'])
+def end_session():
+    """Handle session termination and cleanup resources.
+    
+    This endpoint should be called when a voice conversation ends to clean up associated resources.
+    It can be triggered from the frontend when the React useConversation.endSession() is called.
+    
+    Request body should include:
+    - session_id: The ID of the session that's ending
+    """
+    data = request.json or {}
+    session_id = data.get('session_id')
+    
+    if not session_id:
+        return jsonify({
+            "status": "error",
+            "message": "Missing session_id parameter"
+        }), 400
+    
+    app.logger.info(f"🔚 Session end request received for session_id: {session_id}")
+    
+    # Run cleanup for this specific session - add robust cleanup to ensure ALL traces are gone
+    app.logger.info(f"🧨 Performing COMPLETE session cleanup for {session_id}")
+    
+    # 1. Clean up image files
+    cleanup_results = cleanup_session_images(session_id)
+    
+    # 2. Force-remove this session from ALL possible places it might be stored
+    if session_id in image_context:
+        image_context.pop(session_id, None)
+        app.logger.info(f"Explicitly removed session {session_id} from image_context")
+    
+    # 3. Clean user mappings pointing to this session
+    removed_mappings = []
+    for user_id, sess_id in list(session_map.items()):
+        if sess_id == session_id:
+            session_map.pop(user_id)
+            removed_mappings.append(user_id)
+    
+    if removed_mappings:
+        app.logger.info(f"Removed mappings from users {removed_mappings} to session {session_id}")
+    
+    # 4. Check if this was the pending session
+    global pending_session_id
+    if pending_session_id == session_id:
+        app.logger.info(f"Cleared pending session ID: {session_id}")
+        pending_session_id = None
+    
+    return jsonify({
+        "status": "success",
+        "message": f"Session {session_id} ended and resources cleaned up",
+        "cleanup_results": cleanup_results
+    })
 
 @app.route('/analyze', methods=['POST'])
 def analyze_image():
@@ -409,10 +651,9 @@ def chat_completions():
                     messages.append(image_message)
                     app.logger.info("Added image to empty messages list")
                 
-                # Keep the image in context to allow multiple messages about it
-                # Don't remove it immediately after first use
-                # image_context.pop(session_id, None) 
-                app.logger.info(f"Keeping image {image_filename} in context for session {session_id} for future messages")
+                # We'll keep the image in context during the session but ensure
+                # it will be cleaned up when the session ends via the cleanup endpoint
+                app.logger.info(f"Keeping image {image_filename} in context for session {session_id} for current conversation")
             else:
                 app.logger.info(f"No image found for session {session_id}")
         else:

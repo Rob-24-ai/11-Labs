@@ -149,6 +149,13 @@ Based on detailed research into integrating the `@11labs/react` SDK with Vite/Re
     *   Implement essential callbacks (`onConnect`, `onDisconnect`, `onMessage`, `onError`).
     *   **Crucially, implement `useEffect` cleanup to call `conversation.endSession()` on component unmount.**
 3.  **HTTPS for Development:** Microphone access requires a secure context. The Vite development server must be configured to use HTTPS (`vite.config.js` or `vite --https`).
+
+## 6. Completed Enhancements
+
+*   **Image Persistence Fix:** ✅ Implemented complete reset of all session state and image files on server startup to prevent images from persisting between sessions.
+*   **Message Attribution Fix:** ✅ Added source-based filtering to ensure only AI responses are displayed in the conversation UI, using the message `source` property to correctly identify message origin.
+*   **Session Resource Management:** ✅ Enhanced session termination to thoroughly clean up all resources when a session ends, including images, mappings, and context data.
+*   **Conversation Display:** ✅ Improved the conversation UI to properly show only AI messages without displaying user inputs.
 4.  **Troubleshooting Note:** Console errors like "A listener indicated an asynchronous response..." are likely caused by browser extensions, not the primary integration logic.
 
 ## 6. ElevenLabs Voice Integration Testing Results
