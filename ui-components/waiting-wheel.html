@@ -1,0 +1,300 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="color-scheme" content="light">
+  <title>Waiting Wheel Component</title>
+  <style>
+    body {
+      font-family: sans-serif;
+      margin: 0;
+      padding: 0;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      min-height: 100vh;
+      background-color: #e6ebf3;
+      color-scheme: light;
+    }
+    
+    :root {
+      --bg-color: #e6ebf3;
+    }
+    
+    .container {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 30px;
+    }
+    
+    .controls {
+      display: flex;
+      gap: 10px;
+    }
+    
+    button {
+      padding: 8px 16px;
+      background-color: #232946;
+      color: white;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 14px;
+    }
+    
+    button:hover {
+      background-color: #35407e;
+    }
+    
+    /* Rotating Dots Styles */
+    .rotating-dots-container {
+      position: relative;
+      width: 200px;
+      height: 200px;
+      margin: 40px 0;
+    }
+    
+    /* Shadow Layer (fixed, doesn't rotate) */
+    .shadow-layer {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      pointer-events: none;
+      z-index: 1;
+    }
+    
+    /* Individual dot shadows with fixed angle (bottom-right light source) */
+    .dot-shadow {
+      position: absolute;
+      width: 24px;
+      height: 24px;
+      border-radius: 50%;
+      transform: translate(-50%, -50%);
+      box-shadow: 
+        -3px -3px 20px 4px rgba(255, 255, 255, 0.9), /* Enhanced outer white glow */
+        -1px -1px 8px 2px rgba(255, 255, 255, 1),   /* Enhanced inner white glow */
+        5px 5px 12px rgba(0, 0, 0, 0.35),           /* Even darker drop shadow (bottom-right light) */
+        2px 2px 8px rgba(0, 0, 0, 0.3),             /* Even darker medium shadow */
+        6px 6px 16px rgba(0, 0, 0, 0.15);           /* Darker distant shadow for more depth */
+      background-color: transparent;
+      z-index: 1;
+    }
+    
+    /* Rotating ring of dots */
+    .dots-ring {
+      position: absolute;
+      width: 100%;
+      height: 100%;
+      top: 0;
+      left: 0;
+      transition: transform 0.15s cubic-bezier(0.25, 0.1, 0.25, 1); /* Faster, more direct movement */
+      z-index: 2;
+    }
+    
+    /* Base dot style with subtle gradient for added dimension */
+    .dot {
+      position: absolute;
+      width: 24px;
+      height: 24px;
+      border-radius: 50%;
+      background: linear-gradient(135deg, #f0f5ff, var(--bg-color));
+      transform: translate(-50%, -50%);
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>Waiting Wheel</h1>
+    
+    <div class="rotating-dots-container">
+      <!-- Fixed shadow layer (doesn't rotate) -->
+      <div class="shadow-layer" id="shadow-layer"></div>
+      <!-- Rotating dots -->
+      <div class="dots-ring" id="dots-ring"></div>
+    </div>
+    
+    <div class="controls">
+      <button id="start-btn">Start</button>
+      <button id="pause-btn">Pause</button>
+    </div>
+  </div>
+
+  <script>
+    // Configuration
+    const numDots = 7;
+    const radius = 70; // Reduced by 1/8 from original 80
+    const dotsRing = document.getElementById('dots-ring');
+    const shadowLayer = document.getElementById('shadow-layer');
+    const startBtn = document.getElementById('start-btn');
+    const pauseBtn = document.getElementById('pause-btn');
+    
+    let rotationDuration = 12; // seconds for a full rotation (slowed down by 50%)
+    let isAnimating = false;
+    let dotPositions = [];
+    
+    // Create dots and their shadows
+    function createDots() {
+      for (let i = 0; i < numDots; i++) {
+        // Calculate position on the circle
+        const angle = (i / numDots) * Math.PI * 2; // in radians
+        const x = radius * Math.cos(angle) + 100; // center at 100px
+        const y = radius * Math.sin(angle) + 100; // center at 100px
+        
+        // Save position for shadow reference
+        dotPositions.push({x, y});
+        
+        // Create actual dot (without shadows)
+        const dot = document.createElement('div');
+        dot.className = 'dot';
+        dot.style.left = `${x}px`;
+        dot.style.top = `${y}px`;
+        dotsRing.appendChild(dot);
+        
+        // Create fixed shadow for this dot (in the same position)
+        const shadow = document.createElement('div');
+        shadow.className = 'dot-shadow';
+        shadow.style.left = `${x}px`;
+        shadow.style.top = `${y}px`;
+        shadowLayer.appendChild(shadow);
+      }
+    }
+    
+    // Update shadow positions to match current dot positions
+    function updateShadows() {
+      if (!isAnimating) return;
+      
+      // Get current rotation of the dots ring
+      const rotationStyle = window.getComputedStyle(dotsRing).getPropertyValue('transform');
+      const matrix = new DOMMatrix(rotationStyle);
+      const angle = Math.atan2(matrix.b, matrix.a);
+      
+      // Hide all shadows first
+      const shadows = shadowLayer.querySelectorAll('.dot-shadow');
+      shadows.forEach(shadow => shadow.style.display = 'none');
+      
+      // Calculate rotated positions and update shadows
+      for (let i = 0; i < numDots; i++) {
+        const originalX = dotPositions[i].x - 100; // Center at origin for rotation
+        const originalY = dotPositions[i].y - 100;
+        
+        // Apply rotation
+        const rotatedX = originalX * Math.cos(angle) - originalY * Math.sin(angle) + 100;
+        const rotatedY = originalX * Math.sin(angle) + originalY * Math.cos(angle) + 100;
+        
+        // Update shadow position to match rotated dot
+        shadows[i].style.display = 'block';
+        shadows[i].style.left = `${rotatedX}px`;
+        shadows[i].style.top = `${rotatedY}px`;
+      }
+      
+      // Continue updating on animation frame
+      requestAnimationFrame(updateShadows);
+    }
+    
+    // Variables for randomized animation
+    let currentAngle = 0;
+    let targetAngle = 0;
+    let stepInterval;
+    let animationFrame;
+    let isMoving = false;
+    let spinSpeed = 0;
+    let minStepSize = 360 / (numDots * 3); // Minimum movement (about a third between dots)
+    
+    // Start randomized rotation
+    function startAnimation() {
+      if (!isAnimating) {
+        isAnimating = true;
+        startBtn.textContent = 'Restart';
+        updateShadows(); // Start shadow updates
+        scheduleNextMovement();
+      } else {
+        // If already animating, restart
+        stopAnimation();
+        currentAngle = 0;
+        dotsRing.style.transform = `rotate(0deg)`;
+        setTimeout(() => {
+          startAnimation();
+        }, 50);
+      }
+    }
+    
+    // Schedule the next random movement
+    function scheduleNextMovement() {
+      if (!isAnimating) return;
+      
+      // Even shorter random wait time (0.1-0.5 seconds) for more frantic movement
+      const waitTime = 100 + Math.random() * 400;
+      
+      // Schedule next movement
+      stepInterval = setTimeout(() => {
+        if (!isAnimating) return;
+        
+        // Determine random movement parameters - more aggressive
+        const direction = Math.random() > 0.5 ? 1 : -1; // Random direction
+        const distance = minStepSize * (3 + Math.floor(Math.random() * 12)); // Much larger random distance (3-15x min step)
+        spinSpeed = 0.6 + Math.random() * 1.2; // Much faster speed factor
+        
+        // Set new target angle
+        targetAngle = currentAngle + (distance * direction);
+        
+        // Start the movement animation
+        isMoving = true;
+        if (animationFrame) cancelAnimationFrame(animationFrame);
+        animationFrame = requestAnimationFrame(updateRotation);
+      }, waitTime);
+    }
+    
+    // Update rotation animation frame by frame
+    function updateRotation() {
+      if (!isMoving || !isAnimating) return;
+      
+      // Calculate how much to move based on distance to target - more aggressive
+      const diff = targetAngle - currentAngle;
+      const move = diff * 0.15 * spinSpeed; // Less smooth easing with faster speed factor
+      
+      // If we're close enough to target, snap to it
+      if (Math.abs(diff) < 0.1) {
+        currentAngle = targetAngle;
+        isMoving = false;
+        scheduleNextMovement(); // Schedule next movement
+      } else {
+        currentAngle += move;
+        animationFrame = requestAnimationFrame(updateRotation);
+      }
+      
+      // Apply the rotation
+      dotsRing.style.transform = `rotate(${currentAngle}deg)`;
+    }
+    
+    // Stop rotation
+    function pauseAnimation() {
+      if (stepInterval) {
+        clearTimeout(stepInterval);
+        stepInterval = null;
+      }
+      if (animationFrame) {
+        cancelAnimationFrame(animationFrame);
+        animationFrame = null;
+      }
+      isMoving = false;
+      isAnimating = false;
+    }
+    
+    // Speed control removed as requested
+    
+    // Event listeners
+    startBtn.addEventListener('click', startAnimation);
+    pauseBtn.addEventListener('click', pauseAnimation);
+    
+    // Initialize
+    createDots();
+    
+    // Auto-start the animation
+    setTimeout(startAnimation, 500);
+  </script>
+</body>
+</html>
