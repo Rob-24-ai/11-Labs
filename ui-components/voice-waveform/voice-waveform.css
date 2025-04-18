@@ -1,0 +1,60 @@
+body {
+  font-family: sans-serif;
+  background: transparent; /* Make background transparent */
+  color: #333;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  margin: 0;
+  height: 100vh;
+  justify-content: center;
+}
+
+h2 {
+  margin-bottom: 1rem;
+}
+
+#toggle-btn {
+  margin-bottom: 1rem;
+  padding: 0.5rem 1.5rem;
+  font-size: 1rem;
+  border: none;
+  border-radius: 5px;
+  background: #232946;
+  color: #e8ecf2;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+#toggle-btn:active {
+  background: #5e81ac;
+}
+
+#waveform {
+  background: #e8ecf2;
+  border-radius: 8px;
+  box-shadow: 0 2px 24px #23294633;
+}
+
+.mode-controls {
+  margin-top: 20px;
+  display: flex;
+  gap: 10px;
+  justify-content: center;
+}
+
+.mode-controls button {
+  padding: 8px 15px;
+  border: none;
+  border-radius: 5px;
+  background: #232946;
+  color: #e8ecf2;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.15);
+  font-size: 0.9rem;
+}
+
+.mode-controls button:hover {
+  background: #35407e;
+  transform: translateY(-2px);
+}

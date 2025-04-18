@@ -1,0 +1,102 @@
+/* Neumorphic Design Variables */
+:root {
+    --background: #e8ecf2; /* Off-white background */
+    --button-bg: #e8ecf2; /* Same as background for seamless look */
+    --shadow-dark: rgba(163, 177, 198, 0.6); /* Shadow color */
+    --shadow-light: rgba(255, 255, 255, 0.8); /* Highlight color - kept white for effect */
+    --icon-inactive: #a3b1c6; /* Gray for inactive icons */
+    --icon-star: #ffa500; /* Orange for star */
+    --icon-microphone: #3498db; /* Blue for microphone */
+    --icon-heart: #ff69b4; /* Pink for heart */
+}
+
+body {
+    font-family: sans-serif;
+    margin: 0;
+    padding: 20px;
+    background-color: var(--background);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    min-height: 100vh;
+}
+
+h1 {
+    color: #333;
+    margin-bottom: 40px;
+}
+
+.button-container {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 30px;
+    justify-content: center;
+}
+
+/* Basic Button Style */
+.btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border: none;
+    background-color: var(--button-bg);
+    cursor: pointer;
+    transition: all 0.3s ease;
+    position: relative;
+    /* Neumorphic effect with shadow and glow */
+    box-shadow: 
+        8px 8px 15px var(--shadow-dark), /* Bottom right shadow */
+        -8px -8px 15px var(--shadow-light); /* Top left glow */
+}
+
+/* Square buttons (for stars) */
+.btn-square {
+    width: 60px;
+    height: 60px;
+    border-radius: 12px; /* Slightly rounded corners */
+    font-size: 1.4rem;
+}
+
+/* Round buttons (for bookmark and heart) */
+.btn-round {
+    width: 60px;
+    height: 60px;
+    border-radius: 50%; /* Fully rounded for circles */
+    font-size: 1.2rem;
+}
+
+/* Icon colors */
+.btn .fa-star {
+    color: var(--icon-inactive);
+}
+
+.btn.active .fa-star {
+    color: var(--icon-star);
+}
+
+.btn .fa-microphone {
+    color: var(--icon-microphone);
+    font-size: 1.8rem; /* Make microphone larger */
+}
+
+.btn .fa-heart {
+    color: var(--icon-heart);
+}
+
+/* Hover and active states */
+.btn:hover {
+    transform: translateY(-2px);
+}
+
+.btn:active {
+    /* Combined physical push down effect - translate and scale */
+    transform: translateY(2px) scale(0.95);
+    
+    /* Change shadow to appear pressed in */
+    box-shadow: 
+        inset 5px 5px 10px var(--shadow-dark),
+        inset -5px -5px 10px var(--shadow-light);
+    
+    /* Speed up the transition for a snappier feel */
+    transition: all 0.1s ease;
+}

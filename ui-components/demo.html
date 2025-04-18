@@ -1,0 +1,234 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Component Demo</title>
+  <style>
+    body {
+      font-family: sans-serif;
+      margin: 0;
+      padding: 20px;
+      background-color: #e8ecf2;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      min-height: 100vh;
+    }
+    
+    h1 {
+      color: #333;
+      margin-bottom: 30px;
+    }
+    
+    .component-section {
+      margin-bottom: 40px;
+      width: 100%;
+      max-width: 800px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+    }
+    
+    .component-container {
+      background: #e8ecf2;
+      border-radius: 12px;
+      padding: 30px;
+      box-shadow: 0 4px 20px rgba(0,0,0,0.08);
+      width: 100%;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+    }
+    
+    iframe {
+      border: none;
+      width: 100%;
+      height: 300px;
+      border-radius: 8px;
+    }
+    
+    .button-grid {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 20px;
+      margin-top: 20px;
+    }
+    
+    /* Projection Screen Styles */
+    .control-btn {
+      padding: 10px 20px;
+      background-color: #232946;
+      color: #e8ecf2;
+      border: none;
+      border-radius: 5px;
+      cursor: pointer;
+      font-size: 0.9rem;
+      transition: all 0.3s ease;
+      box-shadow: 0 4px 8px rgba(0, 0, 0, 0.15);
+      margin-bottom: 20px;
+    }
+    
+    .control-btn:hover {
+      background-color: #35407e;
+      transform: translateY(-2px);
+    }
+    
+    .control-btn:active {
+      transform: translateY(1px);
+    }
+    
+    .projection-demo {
+      position: relative;
+      padding-bottom: 0;
+      overflow: hidden;
+    }
+    
+    .screen-container {
+      position: relative;
+      width: 100%;
+      height: 350px; /* Increased height to prevent clipping */
+      display: flex;
+      justify-content: center;
+      perspective: 1000px;
+      margin-bottom: 20px; /* Add space at bottom */
+    }
+    
+    .projection-screen {
+      position: relative;
+      width: 100%;
+      height: 0;
+      background-color: #e8ecf2; /* Off-white background */
+      overflow: hidden;
+      transform-origin: top center;
+      transition: 
+          height 1.2s cubic-bezier(0.22, 0.61, 0.36, 1),
+          box-shadow 1.2s cubic-bezier(0.22, 0.61, 0.36, 1);
+      box-shadow: 
+          0 5px 15px rgba(0, 0, 0, 0.3),
+          0 2px 4px rgba(0, 0, 0, 0.2);
+      border-radius: 0 0 15px 15px; /* More pronounced rounded corners */
+    }
+    
+    .projection-screen.show {
+      height: 300px;
+      box-shadow: 
+          0 15px 35px rgba(0, 0, 0, 0.4),
+          0 5px 15px rgba(0, 0, 0, 0.3);
+    }
+    
+    .projected-image {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      display: none; /* Initially hidden */
+      align-items: center;
+      justify-content: center;
+      background-color: transparent;
+    }
+    
+    .projected-image img {
+      max-width: 90%; /* Allow image to maintain aspect ratio */
+      max-height: 90%;
+      object-fit: contain; /* Preserve aspect ratio */
+      filter: blur(5px); /* Initially blurred */
+      transition: filter 0.3s ease-out; /* Quick transition for focus effect */
+    }
+    
+    .projected-image img.focused {
+      filter: blur(0px); /* Sharp when focused class is added */
+    }
+  </style>
+</head>
+<body>
+  <h1>Component Demo</h1>
+  
+  <div class="component-section">
+    <h2>Waveform</h2>
+    <div class="component-container">
+      <iframe src="voice-waveform/voice-waveform.html" style="height: 350px;"></iframe>
+    </div>
+  </div>
+  
+  <div class="component-section">
+    <h2>Projection Screen</h2>
+    <div class="component-container projection-demo">
+      <button class="control-btn" id="showScreenDemo">Show Projection Screen</button>
+      <div class="screen-container">
+        <div class="projection-screen">
+          <div class="projected-image">
+            <img src="https://images.pexels.com/photos/1266810/pexels-photo-1266810.jpeg?auto=compress&cs=tinysrgb&w=800" alt="Projected Image">
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+  
+  <div class="component-section">
+    <h2>Neumorphic Buttons</h2>
+    <div class="component-container">
+      <iframe src="buttons/button-practice.html"></iframe>
+    </div>
+  </div>
+  
+  <div class="component-section">
+    <h2>Dark Mode Buttons</h2>
+    <div class="component-container">
+      <iframe src="buttons/button-practice-dark.html"></iframe>
+    </div>
+  </div>
+  
+  <script>
+    // Simple script to ensure iframes resize properly
+    window.addEventListener('load', function() {
+      const iframes = document.querySelectorAll('iframe');
+      iframes.forEach(iframe => {
+        iframe.onload = function() {
+          iframe.style.height = iframe.contentWindow.document.body.scrollHeight + 50 + 'px';
+        }
+      });
+      
+      // Projection Screen functionality
+      const showScreenBtn = document.getElementById('showScreenDemo');
+      const projectionScreen = document.querySelector('.projection-screen');
+      const projectedImage = document.querySelector('.projected-image');
+      const actualImage = projectedImage.querySelector('img'); // Get the image element
+      
+      let isScreenShown = false;
+      
+      showScreenBtn.addEventListener('click', function() {
+        if (!isScreenShown) {
+          // Start deploying the screen
+          projectionScreen.classList.add('show');
+          actualImage.classList.remove('focused'); // Ensure starts blurred
+          showScreenBtn.textContent = 'Hide Projection Screen';
+
+          // Listen for the end of the screen deployment transition
+          const screenTransitionHandler = (event) => {
+            // Only act when the 'height' transition finishes
+            if (event.propertyName === 'height') {
+              projectedImage.style.display = 'flex'; // Show image container instantly
+              // Use setTimeout to ensure display change renders before adding class for transition
+              setTimeout(() => {
+                  actualImage.classList.add('focused'); // Trigger focus transition
+              }, 10); // Small delay
+              projectionScreen.removeEventListener('transitionend', screenTransitionHandler);
+            }
+          };
+          projectionScreen.addEventListener('transitionend', screenTransitionHandler);
+
+        } else {
+          // Start retracting the screen
+          projectionScreen.classList.remove('show');
+          projectedImage.style.display = 'none'; // Hide image immediately
+          actualImage.classList.remove('focused'); // Reset focus state
+          showScreenBtn.textContent = 'Show Projection Screen';
+        }
+        isScreenShown = !isScreenShown;
+      });
+    });
+  </script>
+</body>
+</html>

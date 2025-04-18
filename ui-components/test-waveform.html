@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Waveform Test</title>
+  <style>
+    body {
+      font-family: sans-serif;
+      background: #ffffff;
+      margin: 0;
+      padding: 20px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      min-height: 100vh;
+    }
+    .container {
+      width: 600px;
+      height: 300px;
+      background: white;
+      border-radius: 12px;
+      padding: 20px;
+      box-shadow: 0 4px 20px rgba(0,0,0,0.08);
+      margin-top: 40px;
+    }
+  </style>
+</head>
+<body>
+  <h1>Voice Waveform Test</h1>
+  <div class="container">
+    <!-- Direct inclusion of waveform HTML, not in an iframe -->
+    <h2>Voice Waveform Visualizer</h2>
+    <button id="toggle-btn" style="margin-bottom: 1rem; padding: 0.5rem 1.5rem; font-size: 1rem; border: none; border-radius: 5px; background: #232946; color: #fff; cursor: pointer;">Start</button>
+    <canvas id="waveform" width="560" height="200" style="background: #fff; border-radius: 8px; box-shadow: 0 2px 24px rgba(35,41,70,0.2);"></canvas>
+  </div>
+
+  <script>
+    const canvas = document.getElementById('waveform');
+    const ctx = canvas.getContext('2d');
+    const btn = document.getElementById('toggle-btn');
+
+    let audioCtx = null;
+    let analyser = null;
+    let dataArray = null;
+    let source = null;
+    let stream = null;
+    let running = false;
+
+    function getAmplitude(data) {
+      // Compute normalized amplitude (0..1)
+      let sum = 0;
+      for (let i = 0; i < data.length; i++) {
+        let v = data[i] - 128;
+        sum += v * v;
+      }
+      return Math.sqrt(sum / data.length) / 128;
+    }
+
+    function draw() {
+      if (!running) return;
+      requestAnimationFrame(draw);
+      analyser.getByteTimeDomainData(dataArray);
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+      // Speaker pulse effect: perfect ring, centered, pulsing with amplitude
+      const amplitude = getAmplitude(dataArray);
+      const baseRadius = 60;
+      const ringWidth = 16; // Thinner ring
+      const scale = 1 + amplitude * 0.45;
+      const cx = canvas.width / 2;
+      const cy = canvas.height / 2;
+
+      // First pass: bottom-right shadow (darker)
+      ctx.save();
+      ctx.shadowColor = 'rgba(163, 177, 198, 0.45)'; // Softer shadow
+      ctx.shadowBlur = 10 + amplitude * 8;
+      ctx.shadowOffsetX = 5;
+      ctx.shadowOffsetY = 5;
+      ctx.beginPath();
+      ctx.arc(cx, cy, baseRadius * scale, 0, Math.PI * 2, false);
+      ctx.arc(cx, cy, (baseRadius - ringWidth) * scale, 0, Math.PI * 2, true);
+      ctx.closePath();
+      ctx.fillStyle = '#fff'; // Pure white to match buttons
+      ctx.fill();
+      ctx.restore();
+      
+      // Second pass: top-left glow (lighter with subtle color)
+      ctx.save();
+      ctx.shadowColor = 'rgba(210, 225, 255, 0.6)'; // More subtle blue-tinted glow
+      ctx.shadowBlur = 10 + amplitude * 4;
+      ctx.shadowOffsetX = -5;
+      ctx.shadowOffsetY = -5;
+      ctx.beginPath();
+      ctx.arc(cx, cy, baseRadius * scale, 0, Math.PI * 2, false);
+      ctx.arc(cx, cy, (baseRadius - ringWidth) * scale, 0, Math.PI * 2, true);
+      ctx.closePath();
+      ctx.fillStyle = '#fff'; // Pure white to match buttons
+      ctx.fill();
+      ctx.restore();
+
+      // Draw subtle outline
+      ctx.save();
+      ctx.lineWidth = 2;
+      ctx.strokeStyle = 'rgba(200,200,220,0.18)';
+      ctx.beginPath();
+      ctx.arc(cx, cy, baseRadius * scale, 0, Math.PI * 2);
+      ctx.closePath();
+      ctx.stroke();
+      ctx.restore();
+    }
+
+    async function start() {
+      stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      analyser = audioCtx.createAnalyser();
+      analyser.fftSize = 1024;
+      dataArray = new Uint8Array(analyser.fftSize);
+      source = audioCtx.createMediaStreamSource(stream);
+      source.connect(analyser);
+      running = true;
+      btn.textContent = 'Stop';
+      draw();
+    }
+
+    function stop() {
+      running = false;
+      btn.textContent = 'Start';
+      if (audioCtx) {
+        audioCtx.close();
+        audioCtx = null;
+      }
+      if (stream) {
+        stream.getTracks().forEach(track => track.stop());
+        stream = null;
+      }
+    }
+
+    btn.addEventListener('click', () => {
+      if (!running) {
+        start();
+      } else {
+        stop();
+      }
+    });
+
+    window.addEventListener('beforeunload', stop);
+  </script>
+</body>
+</html>

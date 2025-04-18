@@ -1,0 +1,39 @@
+body {
+    font-family: sans-serif;
+    margin: 0;
+    padding: 20px;
+    /* background-color: #f0f0f0; */ /* Remove static background */
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    min-height: 100vh;
+
+    /* Animated Gradient */
+    /* background: linear-gradient(-45deg, #ee7752, #e73c7e, #23a6d5, #23d5ab); */ /* Original vibrant gradient */
+    /* background: linear-gradient(-45deg, #f8f8ff, #f0fff0, #f0f8ff, #fffafa); */ /* Subtle pastel gradient */
+    background: linear-gradient(-45deg, #ffdde1, #ee9ca7, #b3e5fc, #e1f5fe); /* Slightly more visible pastels */
+    background-size: 400% 400%;
+    animation: gradientBG 15s ease infinite;
+}
+
+@keyframes gradientBG {
+	0% {
+		background-position: 0% 50%;
+	}
+	50% {
+		background-position: 100% 50%;
+	}
+	100% {
+		background-position: 0% 50%;
+	}
+}
+
+h1 {
+    /* color: #fff; */ /* Changed to white for better contrast */
+    /* color: #444; */ /* Changed back to dark grey for contrast */
+    color: #fff; /* Changed to white as requested */
+    /* text-shadow: 1px 1px 2px rgba(0,0,0,0.5); */ /* Removed shadow as it's less needed now */
+    text-shadow: 1px 1px 2px rgba(0,0,0,0.5); /* Re-added shadow for readability */
+}
+
+/* Add styles for animated elements here */

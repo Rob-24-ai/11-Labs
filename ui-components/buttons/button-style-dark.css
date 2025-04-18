@@ -1,0 +1,123 @@
+/* Neumorphic Design Variables - Dark Mode */
+:root {
+    --background: #1e1f26; /* Dark background */
+    --button-bg: #2d2e36; /* Button base color */
+    --button-center: #1e2028; /* Much darker for the crater center */
+    --button-mid: #252731; /* Mid-tone for gradient transition */
+    --button-dipped: #232530; /* Darker for the dipped center */
+    --shadow-dark: rgba(0, 0, 0, 0.4); /* Softer shadow */
+    --shadow-light: rgba(100, 100, 130, 0.25); /* Lighter, more subtle highlight */
+    --text-color: #e0e0e0; /* Light text */
+    --icon-inactive: #6c7086; /* Muted gray for inactive icons */
+    --icon-star: #ffc107; /* Warmer yellow for star */
+    --icon-microphone: #4dabf7; /* Brighter blue for microphone */
+    --icon-heart: #ff6b95; /* Brighter pink for heart */
+}
+
+body {
+    font-family: sans-serif;
+    margin: 0;
+    padding: 20px;
+    background-color: var(--background);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    min-height: 100vh;
+    color: var(--text-color);
+}
+
+h1 {
+    color: var(--text-color);
+    margin-bottom: 40px;
+}
+
+.button-container {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 30px;
+    justify-content: center;
+}
+
+/* Basic Button Style */
+.btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border: none;
+    background-color: var(--button-bg);
+    cursor: pointer;
+    transition: all 0.3s ease;
+    position: relative;
+    /* True crater-like concave surface */
+    background: radial-gradient(
+        circle at center,
+        var(--button-center) 15%, /* Darker center */
+        var(--button-mid) 50%,    /* Mid-tone transition */
+        var(--button-bg) 100%     /* Lighter edges */
+    );
+    box-shadow: 
+        /* Consistent lighting from above (top-right) */
+        inset 2px 2px 10px rgba(255, 255, 255, 0.1),  /* Light hitting top-right rim */
+        inset -2px -2px 10px rgba(0, 0, 0, 0.5),      /* Shadow on bottom-left rim */
+        /* Drop shadow */
+        0 4px 8px rgba(0, 0, 0, 0.3); /* Subtle drop shadow */
+}
+
+/* Square buttons (for stars) */
+.btn-square {
+    width: 60px;
+    height: 60px;
+    border-radius: 12px; /* Slightly rounded corners */
+    font-size: 1.4rem;
+}
+
+/* Round buttons (for microphone and heart) */
+.btn-round {
+    width: 60px;
+    height: 60px;
+    border-radius: 50%; /* Fully rounded for circles */
+    font-size: 1.2rem;
+}
+
+/* Icon colors */
+.btn .fa-star {
+    color: var(--icon-inactive);
+}
+
+.btn.active .fa-star {
+    color: var(--icon-star);
+}
+
+.btn .fa-microphone {
+    color: var(--icon-microphone);
+    font-size: 1.8rem; /* Make microphone larger */
+}
+
+.btn .fa-heart {
+    color: var(--icon-heart);
+}
+
+/* Hover and active states */
+.btn:hover {
+    transform: translateY(-2px);
+}
+
+.btn:active {
+    /* Combined physical push down effect - translate and scale */
+    transform: translateY(2px) scale(0.95);
+    
+    /* Deeper crater-like concave surface when pressed */
+    background: radial-gradient(
+        circle at center,
+        var(--button-center) 20%, /* Slightly larger dark center */
+        var(--button-mid) 60%,    /* Expanded mid-tone transition */
+        var(--button-bg) 100%     /* Lighter edges */
+    );
+    box-shadow: 
+        /* Consistent lighting from above (top-right) but stronger */
+        inset 3px 3px 12px rgba(255, 255, 255, 0.08),  /* Light hitting top-right rim */
+        inset -3px -3px 12px rgba(0, 0, 0, 0.6);       /* Shadow on bottom-left rim */
+    
+    /* Speed up the transition for a snappier feel */
+    transition: all 0.1s ease;
+}
