@@ -16,7 +16,8 @@ if LLM_PROVIDER == "gemini":
     # Gemini configuration
     API_KEY = os.getenv("GEMINI_API_KEY", os.getenv("OPENAI_API_KEY"))  # Fallback support
     BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai/"
-    DEFAULT_MODEL = os.getenv("DEFAULT_MODEL", "gemini-1.5-pro")
+    # Use exact Gemini model version as requested
+    DEFAULT_MODEL = os.getenv("DEFAULT_MODEL", "gemini-2.5-pro-preview-03-25")  # Using precise model version
 else:  # Default to OpenAI
     API_KEY = os.getenv("OPENAI_API_KEY")
     BASE_URL = None  # Use OpenAI's default

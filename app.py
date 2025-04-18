@@ -12,6 +12,9 @@ from llm_service import LLMService
 import time 
 import logging
 # Import central LLM configuration
+# Comment out the forced provider settings to use values from .env
+# os.environ['LLM_PROVIDER'] = 'openai'  # Use OpenAI by default
+# os.environ['DEFAULT_MODEL'] = 'gpt-4o'  # Use GPT-4o model
 from llm_config import LLM_PROVIDER, DEFAULT_MODEL
 
 # Load environment variables from .env file
@@ -494,11 +497,15 @@ def chat_completions():
             }), 400
         
         # Extract key parameters
-        model = data.get('model', DEFAULT_MODEL)
+        # Always use the environment-configured models to avoid mismatches
+        model = DEFAULT_MODEL  # Force use of configured model (gemini-1.5-pro for Gemini)
         messages = data.get('messages', [])
         temperature = data.get('temperature') 
         max_tokens = data.get('max_tokens')
-        stream = data.get('stream', False) 
+        stream = data.get('stream', False)
+        
+        # Log the model we're actually using
+        print(f"Using model: {model} with provider: {LLM_PROVIDER}")
         
         # Validate messages format
         if not isinstance(messages, list) or not messages:

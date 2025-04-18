@@ -23,6 +23,7 @@ function App() {
   const [selectedImage, setSelectedImage] = useState(null); // State for selected image file
   const [isUploading, setIsUploading] = useState(false); // State for upload loading indicator
   const [sessionId, setSessionId] = useState(null); // State for sessionId
+  const [uploadError, setUploadError] = useState(null); // State for image upload errors
   
   // Reference to track component mounting status
   const isMounted = useRef(true);

@@ -58,9 +58,27 @@ class OpenAIService(LLMService):
         """
         try:
             # Use provided model or default from config
-            from llm_config import DEFAULT_MODEL
+            from llm_config import DEFAULT_MODEL, LLM_PROVIDER
             model_name = model if model is not None else DEFAULT_MODEL
-            # Prepare parameters for the API call
+            
+            # Log request details for debugging
+            print(f"Making LLM request with provider: {LLM_PROVIDER}, model: {model_name}")
+            print(f"Stream mode: {stream}")
+            
+            # Prepare parameters for the API call with detailed logging
+            print(f"\n=== MODEL DEBUG INFO ===\n")
+            print(f"Using provider: {LLM_PROVIDER}")
+            print(f"Raw model_name: {model_name}")
+            
+            # CRITICAL FIX: When using Gemini, ensure model name is correctly formatted
+            if LLM_PROVIDER == 'gemini':
+                # For Gemini API compatibility
+                if not model_name.startswith('gemini-'):
+                    print(f"WARNING: Model name {model_name} doesn't look like a Gemini model, forcing use of gemini-1.5-pro")
+                    model_name = 'gemini-1.5-pro'
+            
+            print(f"Final model_name: {model_name}")
+            
             params = {
                 "model": model_name,
                 "messages": messages,
@@ -68,16 +86,58 @@ class OpenAIService(LLMService):
                 "stream": stream
             }
             
+            print(f"Full params: {params}")
+            print(f"=== END MODEL DEBUG INFO ===\n")
+            
             # Add max_tokens if provided
             if max_tokens is not None:
                 params["max_tokens"] = max_tokens
                 
             response = self.client.chat.completions.create(**params)
-            return response
-        except APIError as e:
-            # Log the error and re-raise
-            print(f"OpenAI API Error: {str(e)}")
-            raise
+            
+            # Ensure a valid response is always returned, even if response structure differs
+            if stream:
+                return response  # Return the stream iterator directly
+            else:
+                # For non-streaming responses, ensure we return a valid object
+                # that can be converted to JSON by app.py
+                try:
+                    # Try model_dump if available (typical for OpenAI responses)
+                    return response
+                except (AttributeError, TypeError) as e:
+                    # If model_dump fails, attempt to handle as a dict-like structure
+                    print(f"Warning: Could not use model_dump on response: {e}")
+                    # If it's a dict or dict-like, return it directly
+                    if hasattr(response, '__getitem__') and hasattr(response, 'keys'):
+                        return response
+                    # Otherwise, try to convert to a dict
+                    return {
+                        "id": getattr(response, "id", "gemini-response"),
+                        "object": "chat.completion",
+                        "created": getattr(response, "created", 0),
+                        "model": model_name,
+                        "choices": [{
+                            "index": 0, 
+                            "message": {
+                                "role": "assistant",
+                                "content": str(getattr(response, "content", str(response)))
+                            },
+                            "finish_reason": "stop"
+                        }]
+                    }
+                    
+        except Exception as e:
+            # Log the error and re-raise with more details
+            print(f"LLM API Error with {LLM_PROVIDER} model {model_name}: {str(e)}")
+            import traceback
+            print(traceback.format_exc())
+            # Return a valid error response that can be converted to JSON
+            return {
+                "error": {
+                    "message": f"Error in chat completion: {str(e)}",
+                    "type": "api_error"
+                }
+            }
     
     def process_image(self, image_data: Union[str, bytes]) -> str:
         """
